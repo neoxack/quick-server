@@ -42,10 +42,10 @@ typedef enum _states {
 	start_clean
 } states;
 
-typedef enum _server_status {
+typedef enum _qs_status {
 	not_runned,
 	runned
-} server_status;
+} qs_status;
 
 struct _connection {
 	struct socket client;
@@ -74,9 +74,9 @@ typedef struct _connection connection;
 typedef struct _io_context io_context;
 typedef struct _extend_connection extend_connection;
 
-typedef struct _server_info {
+typedef struct _qs_info {
 	volatile long opened_sockets_count;
-} server_info;
+} qs_info;
 
 void sockaddr_to_string(char *buf, size_t len, union usa *usa) ;
 
@@ -92,7 +92,7 @@ typedef BOOL (*ON_SENDFILE_PROC)( connection *connection);
 typedef void (*ON_ERROR_PROC)( wchar_t *str_error, unsigned long error );
 typedef void (*USERMESSAGE_HANDLER_PROC)(connection *connection, void *message);
 
-typedef struct _server_params {
+typedef struct _qs_params {
 	struct _listener {
 	char *listen_adr;
 	unsigned long init_accepts_count;
@@ -114,24 +114,24 @@ typedef struct _server_params {
         ON_ERROR_PROC                 on_error;
 		USERMESSAGE_HANDLER_PROC	  on_message;
         } callbacks;
-} server_params;
+} qs_params;
 
 // 
 // Server functions.
 //
-unsigned long  server_create(void **server_instance );
-void		   server_delete(void *server_instance );
-//unsigned long  server_add_listener( void * server_instance, PLISTENER pParam, void *  user_data);
-//unsigned long  server_remove_listener( void * server_instance, connection * pConnection );
-//unsigned long  server_get_listeners(  void * server_instance, SOCKET **listeners);
-unsigned int  server_start( void *server_instance, server_params * params );
-unsigned int  server_stop( void *server_instance );
-unsigned int  server_send(connection *connection, BYTE *buffer, unsigned long len);
-unsigned int  server_send_file( void *server_instance, connection *connection, HANDLE file);
-unsigned int  server_recv(connection *connection, BYTE *buffer, unsigned long len);
-unsigned int  server_close_connection( void *server_instance, connection *connection );
-unsigned int  server_post_message_to_pool(void *server_instance, void *message, connection *connection);
-unsigned int  server_query_server_information( void *server_instance, server_info *server_information );
+unsigned long  qs_create(void **qs_instance );
+void		   qs_delete(void *qs_instance );
+//unsigned long  qs_add_listener( void * qs_instance, PLISTENER pParam, void *  user_data);
+//unsigned long  qs_remove_listener( void * qs_instance, connection * pConnection );
+//unsigned long  qs_get_listeners(  void * qs_instance, SOCKET **listeners);
+unsigned int  qs_start( void *qs_instance, qs_params * params );
+unsigned int  qs_stop( void *qs_instance );
+unsigned int  qs_send(connection *connection, BYTE *buffer, unsigned long len);
+unsigned int  qs_send_file( void *qs_instance, connection *connection, HANDLE file);
+unsigned int  qs_recv(connection *connection, BYTE *buffer, unsigned long len);
+unsigned int  qs_close_connection( void *qs_instance, connection *connection );
+unsigned int  qs_post_message_to_pool(void *qs_instance, void *message, connection *connection);
+unsigned int  qs_query_qs_information( void *qs_instance, qs_info *qs_information );
 
 #include "fast_buffer.h"
 
@@ -153,14 +153,14 @@ typedef struct _connection_list {
 	node *head;
 } connection_list;
 
-typedef struct _server_context {
-	server_status status;
-	server_info server_info;
+typedef struct _qs_context {
+	qs_status status;
+	qs_info qs_info;
 	HANDLE iocp;
 	connection_list* connections;
-	struct socket server_socket;
+	struct socket qs_socket;
 	memory_manager *mem_manager;
-	server_params server_params;
+	qs_params qs_params;
 			
 	struct _ex_funcs {
 		LPFN_ACCEPTEX AcceptEx; 
@@ -169,7 +169,7 @@ typedef struct _server_context {
 		LPFN_TRANSMITFILE TransmitFile;
 	} ex_funcs;
 
-} server_context;
+} qs_context;
 
 
 
@@ -183,4 +183,4 @@ connection_list* connection_list_new();
 void connection_list_delete(connection_list* list);
 void connection_list_add(connection_list* list, connection *con);
 void connection_list_remove(connection_list* list, connection *con);
-void clear_inactive_connections(server_context* context, int t);
+void clear_inactive_connections(qs_context* context, int t);

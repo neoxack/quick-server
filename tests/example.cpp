@@ -3,10 +3,10 @@
 #include <conio.h>
 
 #include "stdafx.h"
-#include "server_core.h"
+#include "qs_core.h"
 
-#define COUNT 512000
-#define BUF_SIZE 2048
+#define COUNT 64000
+#define BUF_SIZE 4096
 
 static void *server;
 
@@ -14,10 +14,10 @@ static BOOL on_connect1( connection *connection )
 {
 	char buf1[64];
 	sockaddr_to_string(buf1, 64, &connection->client.rsa); 
-//	printf("connection from: %s\n", buf1);
-	if(server_recv(connection, connection->buffer, BUF_SIZE) != 0)
+	printf("connection from: %s\n", buf1);
+	if(qs_recv(connection, connection->buffer, BUF_SIZE) != 0)
 	{
-		server_close_connection(server, connection);
+		qs_close_connection(server, connection);
 	}
 	return 1;
 }
@@ -26,7 +26,7 @@ static void on_disconnect1( connection *connection )
 {
 	char buf[128];
 	sockaddr_to_string(buf, 128, &connection->client.rsa); 
-//	printf("%s disconnect\n", buf);
+	printf("%s disconnect\n", buf);
 }
 
 static BOOL on_recv( connection *connection)
@@ -43,27 +43,27 @@ static BOOL on_recv( connection *connection)
 		"</html>";
 
 	
-	char *response = "HTTP/1.0 200 OK\r\n"
+	char *response = "HTTP/1.1 200 OK\r\n"
 		"Content-Type: text/html; charset=utf-8\r\n"
 		"Content-Length: %d\r\n\r\n";
 
 	sprintf((char *)connection->buffer, response, strlen(html));
 	strcat((char *)connection->buffer, html);
 
-	if (server_send(connection, connection->buffer, strlen((char *)connection->buffer)) != 0)
+	if (qs_send(connection, connection->buffer, strlen((char *)connection->buffer)) != 0)
 	{
-		server_close_connection(server, connection);
+		qs_close_connection(server, connection);
 	}
 	return 1;
 }
 
 static BOOL on_send( connection *connection)
 {
-	//if(server_recv(connection, connection->buffer, BUF_SIZE)!=0)
-	//{
-	//	server_close_connection(server, connection);
-	//}
-	server_close_connection(server, connection);
+	if(qs_recv(connection, connection->buffer, BUF_SIZE)!=0)
+	{
+		qs_close_connection(server, connection);
+	}
+	//qs_close_connection(server, connection);
 	return 1;
 }
 
@@ -73,16 +73,16 @@ static void on_error( wchar_t *func_name, unsigned long error )
 
 int _tmain()
 {
-	server_params params = {0};
-	server_create(&server);
+	qs_params params = {0};
+	qs_create(&server);
 
-	params.worker_threads_count = 7;
+	params.worker_threads_count = 4;
 	params.expected_connections_amount = COUNT;
 	params.connection_buffer_size = BUF_SIZE;
-	params.keep_alive_time = 10000;
-	params.keep_alive_interval = 1000;
+	params.keep_alive_time = 1000;
+	params.keep_alive_interval = 100;
 	params.listener.listen_adr = "500";
-	params.listener.init_accepts_count = COUNT;
+	params.listener.init_accepts_count = 200;
 
 	params.callbacks.on_connect = on_connect1;
 	params.callbacks.on_disconnect = on_disconnect1;
@@ -91,7 +91,7 @@ int _tmain()
 	params.callbacks.on_error = on_error;
 
 
-	server_start(server, &params);
+	qs_start(server, &params);
 
 	
 	_getch();

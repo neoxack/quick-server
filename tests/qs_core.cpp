@@ -1,4 +1,4 @@
-#include "server_core.h"
+#include "qs_core.h"
 
 #include <process.h>
 #include <stdio.h>
@@ -77,7 +77,7 @@ void connection_list_remove(connection_list* list, connection *con)
 	LeaveCriticalSection(&list->cs);
 }
 
-void clear_inactive_connections(server_context* context, int t)
+void clear_inactive_connections(qs_context* context, int t)
 {
 	connection_list* list =  context->connections;
 	time_t now = time(NULL);
@@ -89,7 +89,7 @@ void clear_inactive_connections(server_context* context, int t)
 		io_context *cont = get_context(cur->con);
 		if(now - cont->last_activity > t)
 		{
-			server_close_connection(context, cur->con);
+			qs_close_connection(context, cur->con);
 		}
 		cur = cur->next;
 	}
@@ -215,7 +215,7 @@ void memory_manager_destroy(memory_manager *manager)
 
 
 
-__forceinline SOCKET socket_create(server_info *info)
+__forceinline SOCKET socket_create(qs_info *info)
 {
 	SOCKET sock;
 	#if defined(USE_IPV6)
@@ -227,13 +227,13 @@ __forceinline SOCKET socket_create(server_info *info)
 	return sock;
 }
 
-__forceinline void socket_close(SOCKET sock, server_info *info)
+__forceinline void socket_close(SOCKET sock, qs_info *info)
 {
 	closesocket(sock);
 	InterlockedDecrement(&info->opened_sockets_count);
 }
 
-static BOOL init_ex_funcs(server_context* server)
+static BOOL init_ex_funcs(qs_context* server)
 {
 #if defined(USE_IPV6)
 	SOCKET s = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
@@ -259,43 +259,43 @@ static BOOL init_ex_funcs(server_context* server)
 }
 
 
-unsigned long  server_create(void **server_instance )
+unsigned long  qs_create(void **qs_instance )
 {
-	server_context* context = (server_context*)malloc(sizeof(server_context));
-	*server_instance = context;
-	if(*server_instance)
+	qs_context* context = (qs_context*)malloc(sizeof(qs_context));
+	*qs_instance = context;
+	if(*qs_instance)
 	{
-		memset(*server_instance, 0, sizeof(server_instance));
+		memset(*qs_instance, 0, sizeof(qs_instance));
 	
 		return ERROR_SUCCESS;
 	}
 	else return ERROR_ALLOCATE_BUCKET;
 }
 
-void server_delete(void *server_instance )
+void qs_delete(void *qs_instance )
 {
-	free(server_instance);
+	free(qs_instance);
 }
 
 unsigned __stdcall working_thread(void *s);
 unsigned __stdcall cleaner_thread(void *s);
 
-unsigned int server_start( void *server_instance, server_params * params )
+unsigned int qs_start( void *qs_instance, qs_params * params )
 {
 	WSADATA wsaData;
 	int result;
 	int error;	
-	server_context* server;
+	qs_context* server;
 	unsigned int i;
 	io_context *io_context;
 	struct socket so;
 	int on = 1;
 	
-	if(!server_instance || !params) return ERROR_INVALID_PARAMETER;
-	server = (server_context*)server_instance;	
+	if(!qs_instance || !params) return ERROR_INVALID_PARAMETER;
+	server = (qs_context*)qs_instance;	
 	if(server->status == runned) return ERROR_ALREADY_EXISTS;
 
-	memcpy(&server->server_params, params, sizeof(server_params));
+	memcpy(&server->qs_params, params, sizeof(qs_params));
 
 	result = WSAStartup(MAKEWORD(2,2), &wsaData);
 	if (result != 0) 
@@ -305,8 +305,8 @@ unsigned int server_start( void *server_instance, server_params * params )
 		return GetLastError();
 	}
 
-	server->mem_manager = memory_manager_create(server->server_params.expected_connections_amount,
-												(size_t)server->server_params.connection_buffer_size);
+	server->mem_manager = memory_manager_create(server->qs_params.expected_connections_amount,
+												(size_t)server->qs_params.connection_buffer_size);
 
 	if(!server->mem_manager)
 	{
@@ -361,12 +361,12 @@ unsigned int server_start( void *server_instance, server_params * params )
     } 
 	else
 	{
-		memcpy(&server->server_socket, &so, sizeof(so));
-		CreateIoCompletionPort((HANDLE)server->server_socket.sock, server->iocp, server->server_socket.sock, 0);
+		memcpy(&server->qs_socket, &so, sizeof(so));
+		CreateIoCompletionPort((HANDLE)server->qs_socket.sock, server->iocp, server->qs_socket.sock, 0);
 
-		server->server_info.opened_sockets_count = 0;
+		server->qs_info.opened_sockets_count = 0;
 
-		for(i = 0; i<server->server_params.worker_threads_count; ++i)
+		for(i = 0; i<server->qs_params.worker_threads_count; ++i)
 		{
 			create_thread(working_thread, server, 256);
 		}
@@ -383,7 +383,7 @@ unsigned int server_start( void *server_instance, server_params * params )
 	return GetLastError();
 }
 
-unsigned int server_send(connection *connection, BYTE *buffer, unsigned long len)
+unsigned int qs_send(connection *connection, BYTE *buffer, unsigned long len)
 {
 	io_context *context;
 	int  res;
@@ -402,19 +402,19 @@ unsigned int server_send(connection *connection, BYTE *buffer, unsigned long len
 	return ERROR_SUCCESS;
 }
 
-unsigned int  server_send_file(void *server_instance, connection *connection, HANDLE file)
+unsigned int  qs_send_file(void *qs_instance, connection *connection, HANDLE file)
 {
-	server_context* server;	
+	qs_context* server;	
 	io_context *context;
-	if(!server_instance || !connection || file == INVALID_HANDLE_VALUE) return ERROR_INVALID_PARAMETER;
-	server = (server_context*)server_instance;
+	if(!qs_instance || !connection || file == INVALID_HANDLE_VALUE) return ERROR_INVALID_PARAMETER;
+	server = (qs_context*)qs_instance;
 	context = get_context(connection);
 	context->ended_operation = transmit_file;
 	server->ex_funcs.TransmitFile(connection->client.sock, file, 0, 0, (LPOVERLAPPED)context, 0, TF_DISCONNECT | TF_USE_KERNEL_APC);	
 	return ERROR_SUCCESS;
 }
 
-unsigned int server_recv(connection *connection, BYTE *buffer, unsigned long len)
+unsigned int qs_recv(connection *connection, BYTE *buffer, unsigned long len)
 {
 	io_context *context;
 	int res;
@@ -434,40 +434,40 @@ unsigned int server_recv(connection *connection, BYTE *buffer, unsigned long len
 	return ERROR_SUCCESS;
 }
 
-unsigned int  server_close_connection( void *server_instance, connection *connection )
+unsigned int  qs_close_connection( void *qs_instance, connection *connection )
 {
-	server_context* server;	
+	qs_context* server;	
 	io_context *context;
-	if(!server_instance || !connection) return ERROR_INVALID_PARAMETER;
-	server = (server_context*)server_instance;
+	if(!qs_instance || !connection) return ERROR_INVALID_PARAMETER;
+	server = (qs_context*)qs_instance;
 	context = get_context(connection);
 	context->ended_operation = on_disconnect;
 	server->ex_funcs.DisconnectEx(connection->client.sock, (LPOVERLAPPED)context, 0, 0);
 	return ERROR_SUCCESS;
 }
 
-unsigned int server_post_message_to_pool(void *server_instance, void *message, connection *connection)
+unsigned int qs_post_message_to_pool(void *qs_instance, void *message, connection *connection)
 {
-	server_context* server;	
+	qs_context* server;	
 	io_context *context;
-	if(!server_instance || !connection) return ERROR_INVALID_PARAMETER;
-	server = (server_context*)server_instance;
+	if(!qs_instance || !connection) return ERROR_INVALID_PARAMETER;
+	server = (qs_context*)qs_instance;
 	context = get_context(connection);
 	context->ended_operation = user_message;
 	PostQueuedCompletionStatus(server->iocp, 8, (uintptr_t)message, (LPOVERLAPPED)context);
 	return ERROR_SUCCESS;
 }
 
-unsigned int server_query_server_information( void *server_instance, server_info *server_information )
+unsigned int qs_query_qs_information( void *qs_instance, qs_info *qs_information )
 {
-	server_context *server;
-	if(!server_instance || !server_information) return ERROR_INVALID_PARAMETER;
-	server = (server_context*)server_instance;
-	memcpy(server_information, &server->server_info, sizeof(server_info));
+	qs_context *server;
+	if(!qs_instance || !qs_information) return ERROR_INVALID_PARAMETER;
+	server = (qs_context*)qs_instance;
+	memcpy(qs_information, &server->qs_info, sizeof(qs_info));
 	return ERROR_SUCCESS;
 }
 
-static void init_accept(server_context *server, BYTE *out_buf)
+static void init_accept(qs_context *server, BYTE *out_buf)
 {
 	SOCKET client;
 	io_context *new_context;
@@ -475,11 +475,11 @@ static void init_accept(server_context *server, BYTE *out_buf)
 	new_context = memory_manager_alloc(server->mem_manager);
 	if(new_context != NULL)
 	{
-		client = socket_create(&server->server_info);
+		client = socket_create(&server->qs_info);
 		new_context->ended_operation = on_connect;
 		new_context->connection.connection.client.sock = client;
 
-		if(server->ex_funcs.AcceptEx(server->server_socket.sock, new_context->connection.connection.client.sock, out_buf, 0, sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16, 
+		if(server->ex_funcs.AcceptEx(server->qs_socket.sock, new_context->connection.connection.client.sock, out_buf, 0, sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16, 
 			&bytes_transferred, (LPOVERLAPPED)new_context) != 0)
 		{
 			cry("%s: AcceptEx() fail with error: %d",	__func__, WSAGetLastError());
@@ -512,7 +512,7 @@ static void set_keep_alive(connection *con, u_long  keepalivetime, u_long keepal
 
 unsigned __stdcall cleaner_thread(void *s) 
 {
-	server_context *server = (server_context *)s;
+	qs_context *server = (qs_context *)s;
 
 	io_context *context = memory_manager_alloc(server->mem_manager);
 	if(context != NULL)
@@ -524,20 +524,20 @@ unsigned __stdcall cleaner_thread(void *s)
 			PostQueuedCompletionStatus(server->iocp, 8, (uintptr_t)0, (LPOVERLAPPED)context);
 		}
 	}
-
 	return 0;
 }
 
+
 unsigned __stdcall working_thread(void *s) 
 {
-	server_context *server = (server_context *)s;
+	qs_context *server = (qs_context *)s;
 	unsigned long bytes_transferred;
 	ULONG_PTR key;
 	io_context *io_context;
-	unsigned long i;
-	unsigned long n;
 	unsigned char buf[128];
 	int len;
+	unsigned long max_accepts = server->qs_params.listener.init_accepts_count / server->qs_params.worker_threads_count;
+	unsigned long accepts = 0;
 
 	for(;;)
 	{
@@ -557,9 +557,13 @@ unsigned __stdcall working_thread(void *s)
 		if(!bytes_transferred && io_context->ended_operation != on_connect)
 		{
 			//connection_list_remove(server->connections, &io_context->connection.connection);
-			(*server->server_params.callbacks.on_disconnect)((connection *)&io_context->connection);
-			socket_close(io_context->connection.connection.client.sock, &server->server_info);
+			(*server->qs_params.callbacks.on_disconnect)((connection *)&io_context->connection);
+			socket_close(io_context->connection.connection.client.sock, &server->qs_info);
 			memory_manager_free(server->mem_manager, io_context);
+			for(; accepts < max_accepts; ++accepts)
+			{
+				init_accept(server, buf);		
+			}
 			continue;
 		}
 		
@@ -567,10 +571,10 @@ unsigned __stdcall working_thread(void *s)
 		{
 			 
 			//connection_list_add(server->connections, &io_context->connection.connection);
-			//InterlockedIncrement(&server->server_info.connections_count);
-			set_keep_alive(&io_context->connection.connection, server->server_params.keep_alive_time, server->server_params.keep_alive_interval);
+			//InterlockedIncrement(&server->qs_info.connections_count);
+			set_keep_alive(&io_context->connection.connection, server->qs_params.keep_alive_time, server->qs_params.keep_alive_interval);
 			setsockopt(io_context->connection.connection.client.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
-				(char *)&server->server_socket, sizeof(server->server_socket) );
+				(char *)&server->qs_socket, sizeof(server->qs_socket) );
 		
 			len = sizeof(io_context->connection.connection.client.lsa.sa);
 			getsockname(io_context->connection.connection.client.sock, &io_context->connection.connection.client.lsa.sa, &len);
@@ -581,7 +585,7 @@ unsigned __stdcall working_thread(void *s)
 			{
 				cry("%s: CreateIoCompletionPort() fail with error: %d",	__func__, GetLastError());
 			}
-			(*server->server_params.callbacks.on_connect)(&(io_context->connection.connection));
+			(*server->qs_params.callbacks.on_connect)(&(io_context->connection.connection));
 			continue;
 		}
 
@@ -589,24 +593,23 @@ unsigned __stdcall working_thread(void *s)
 		switch(io_context->ended_operation) 
 		{
 		case(send_done):
-			(*server->server_params.callbacks.on_send)(&(io_context->connection.connection));
+			(*server->qs_params.callbacks.on_send)(&(io_context->connection.connection));
 				continue;
 
 		case(recv_done):
-			(*server->server_params.callbacks.on_recv)(&(io_context->connection.connection));
+			(*server->qs_params.callbacks.on_recv)(&(io_context->connection.connection));
 				continue;
 
 		case(transmit_file):
-			(*server->server_params.callbacks.on_send_file)(&(io_context->connection.connection));
+			(*server->qs_params.callbacks.on_send_file)(&(io_context->connection.connection));
 				continue;
 
 		case(user_message):
-			(*server->server_params.callbacks.on_message)(&(io_context->connection.connection), (void *)key);
+			(*server->qs_params.callbacks.on_message)(&(io_context->connection.connection), (void *)key);
 				continue;
 
 		case(start_server):
-			n = *((unsigned long *)key);
-			for(i = 0; i < n; ++i)
+			for(; accepts < max_accepts; ++accepts)
 			{
 				init_accept(server, buf);		
 			}
@@ -618,6 +621,7 @@ unsigned __stdcall working_thread(void *s)
 		}
 
 	}
+
 
 	return 0;
 }
