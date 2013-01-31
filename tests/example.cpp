@@ -47,10 +47,10 @@ static BOOL on_recv( connection *connection)
 		"Content-Type: text/html; charset=utf-8\r\n"
 		"Content-Length: %d\r\n\r\n";
 
-	sprintf((char *)connection->buffer, response, strlen(html));
+	sprintf((char *)connection->buffer, response, (u_int)strlen(html));
 	strcat((char *)connection->buffer, html);
 
-	if (qs_send(connection, connection->buffer, strlen((char *)connection->buffer)) != 0)
+	if (qs_send(connection, connection->buffer, (u_long)strlen((char *)connection->buffer)) != 0)
 	{
 		qs_close_connection(server, connection);
 	}
@@ -76,7 +76,7 @@ int _tmain()
 	qs_params params = {0};
 	qs_create(&server);
 
-	params.worker_threads_count = 4;
+	params.worker_threads_count = 6;
 	params.expected_connections_amount = COUNT;
 	params.connection_buffer_size = BUF_SIZE;
 	params.keep_alive_time = 5000;

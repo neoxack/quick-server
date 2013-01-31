@@ -78,7 +78,7 @@ typedef struct _qs_info {
 	volatile long opened_sockets_count;
 } qs_info;
 
-void sockaddr_to_string(char *buf, size_t len, union usa *usa) ;
+void sockaddr_to_string(char *buf, size_t len, const union usa *usa) ;
 
 // 
 // Callback functions.
@@ -181,4 +181,4 @@ connection_list* connection_list_new();
 void connection_list_delete(connection_list* list);
 void connection_list_add(connection_list* list, connection *con);
 void connection_list_remove(connection_list* list, connection *con);
-void clear_inactive_connections(qs_context* context, int t);
+void clear_inactive_connections(qs_context* context, time_t t);

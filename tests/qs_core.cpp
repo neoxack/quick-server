@@ -45,12 +45,15 @@ void connection_list_delete(connection_list* list)
 void connection_list_add(connection_list* list, connection *con)
 {
 	node *new_node = (node *)malloc(sizeof(node));
-	new_node->con = con;
-	EnterCriticalSection(&list->cs);
-	new_node->next = list->head;
-	list->head = new_node;
-	list->count++;
-	LeaveCriticalSection(&list->cs);
+	if(new_node != NULL)
+	{
+		new_node->con = con;
+		EnterCriticalSection(&list->cs);
+		new_node->next = list->head;
+		list->head = new_node;
+		list->count++;
+		LeaveCriticalSection(&list->cs);
+	}
 }
 
 void connection_list_remove(connection_list* list, connection *con)
@@ -77,7 +80,7 @@ void connection_list_remove(connection_list* list, connection *con)
 	LeaveCriticalSection(&list->cs);
 }
 
-void clear_inactive_connections(qs_context* context, int t)
+void clear_inactive_connections(qs_context* context, time_t t)
 {
 	connection_list* list =  context->connections;
 	time_t now = time(NULL);
@@ -102,20 +105,20 @@ static void cry(const char *fmt, ...)
 	char buf[BUF_LEN];
 	va_list ap;
 	time_t seconds;
-	struct tm* timeinfo;
+	struct tm timeinfo;
 
 	va_start(ap, fmt);
-	(void) vsnprintf(buf, sizeof(buf), fmt, ap);
+	vsnprintf(buf, sizeof(buf), fmt, ap);
 	va_end(ap);
 
 	seconds = time(NULL);
-	timeinfo = localtime(&seconds);
+	localtime_s(&timeinfo, &seconds);
 	
-	printf("[%02d:%02d:%02d %02d.%02d.%02d] %s\n", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, timeinfo->tm_mday, timeinfo->tm_mon + 1, timeinfo->tm_year-100, buf);
+	printf("[%02d:%02d:%02d %02d.%02d.%02d] %s\n", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec, timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year-100, buf);
 }
 
 
-void sockaddr_to_string(char *buf, size_t len, union usa *usa) 
+void sockaddr_to_string(char *buf, size_t len, const union usa *usa) 
 {
 	buf[0] = '\0';
 #if defined(USE_IPV6)
@@ -138,12 +141,12 @@ static int parse_port_string(const char *ptr, struct socket *so)
 
 	memset(so, 0, sizeof(*so));
 
-	if (sscanf(ptr, "%d.%d.%d.%d:%d%n", &a, &b, &c, &d, &port, &len) == 5) 
+	if (sscanf_s(ptr, "%d.%d.%d.%d:%d%n", &a, &b, &c, &d, &port, &len) == 5) 
 	{
 	// Bind to a specific IPv4 address
 		so->lsa.sin.sin_addr.s_addr = htonl((a << 24) | (b << 16) | (c << 8) | d);
 	} 
-	else if (sscanf(ptr, "%d%n", &port, &len) != 1 || len <= 0)
+	else if (sscanf_s(ptr, "%d%n", &port, &len) != 1 || len <= 0)
 	{
 		return 0;
 	}
@@ -215,7 +218,7 @@ void memory_manager_destroy(memory_manager *manager)
 
 
 
-__forceinline SOCKET socket_create(qs_info *info)
+__inline SOCKET socket_create(qs_info *info)
 {
 	SOCKET sock;
 	#if defined(USE_IPV6)
@@ -227,7 +230,7 @@ __forceinline SOCKET socket_create(qs_info *info)
 	return sock;
 }
 
-__forceinline void socket_close(SOCKET sock, qs_info *info)
+__inline void socket_close(SOCKET sock, qs_info *info)
 {
 	closesocket(sock);
 	InterlockedDecrement(&info->opened_sockets_count);
