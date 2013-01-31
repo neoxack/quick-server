@@ -43,7 +43,7 @@ static BOOL on_recv( connection *connection)
 		"</html>";
 
 	
-	char *response = "HTTP/1.1 200 OK\r\n"
+	char *response = "HTTP/1.0 200 OK\r\n"
 		"Content-Type: text/html; charset=utf-8\r\n"
 		"Content-Length: %d\r\n\r\n";
 
@@ -79,8 +79,8 @@ int _tmain()
 	params.worker_threads_count = 4;
 	params.expected_connections_amount = COUNT;
 	params.connection_buffer_size = BUF_SIZE;
-	params.keep_alive_time = 1000;
-	params.keep_alive_interval = 100;
+	params.keep_alive_time = 5000;
+	params.keep_alive_interval = 500;
 	params.listener.listen_adr = "500";
 	params.listener.init_accepts_count = 200;
 

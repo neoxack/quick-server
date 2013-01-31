@@ -502,7 +502,7 @@ static void set_keep_alive(connection *con, u_long  keepalivetime, u_long keepal
 		alive.keepaliveinterval = keepaliveinterval;
 
 		dwRet = WSAIoctl(con->client.sock, SIO_KEEPALIVE_VALS, &alive, sizeof(alive),
-			NULL, 0, &dwSize,(LPOVERLAPPED)context, NULL);
+			NULL, 0, &dwSize, (LPOVERLAPPED)context, NULL);
 		if (dwRet == SOCKET_ERROR)
 		{
 			cry("%s: WSAIoctl() fail with error: %d", __func__, WSAGetLastError());
@@ -526,7 +526,6 @@ unsigned __stdcall cleaner_thread(void *s)
 	}
 	return 0;
 }
-
 
 unsigned __stdcall working_thread(void *s) 
 {
@@ -568,14 +567,12 @@ unsigned __stdcall working_thread(void *s)
 		}
 		
 		if(io_context->ended_operation == on_connect) 
-		{
-			 
+		{		 
 			//connection_list_add(server->connections, &io_context->connection.connection);
-			//InterlockedIncrement(&server->qs_info.connections_count);
-			set_keep_alive(&io_context->connection.connection, server->qs_params.keep_alive_time, server->qs_params.keep_alive_interval);
+			//InterlockedIncrement(&server->qs_info.connections_count);			
 			setsockopt(io_context->connection.connection.client.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
 				(char *)&server->qs_socket, sizeof(server->qs_socket) );
-		
+			set_keep_alive(&io_context->connection.connection, server->qs_params.keep_alive_time, server->qs_params.keep_alive_interval);
 			len = sizeof(io_context->connection.connection.client.lsa.sa);
 			getsockname(io_context->connection.connection.client.sock, &io_context->connection.connection.client.lsa.sa, &len);
 			len = sizeof(io_context->connection.connection.client.rsa.sa);

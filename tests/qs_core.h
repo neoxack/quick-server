@@ -124,14 +124,14 @@ void		   qs_delete(void *qs_instance );
 //unsigned long  qs_add_listener( void * qs_instance, PLISTENER pParam, void *  user_data);
 //unsigned long  qs_remove_listener( void * qs_instance, connection * pConnection );
 //unsigned long  qs_get_listeners(  void * qs_instance, SOCKET **listeners);
-unsigned int  qs_start( void *qs_instance, qs_params * params );
-unsigned int  qs_stop( void *qs_instance );
-unsigned int  qs_send(connection *connection, BYTE *buffer, unsigned long len);
-unsigned int  qs_send_file( void *qs_instance, connection *connection, HANDLE file);
-unsigned int  qs_recv(connection *connection, BYTE *buffer, unsigned long len);
-unsigned int  qs_close_connection( void *qs_instance, connection *connection );
-unsigned int  qs_post_message_to_pool(void *qs_instance, void *message, connection *connection);
-unsigned int  qs_query_qs_information( void *qs_instance, qs_info *qs_information );
+unsigned int   qs_start( void *qs_instance, qs_params * params );
+unsigned int   qs_stop( void *qs_instance );
+unsigned int   qs_send(connection *connection, BYTE *buffer, unsigned long len);
+unsigned int   qs_send_file( void *qs_instance, connection *connection, HANDLE file);
+unsigned int   qs_recv(connection *connection, BYTE *buffer, unsigned long len);
+unsigned int   qs_close_connection( void *qs_instance, connection *connection );
+unsigned int   qs_post_message_to_pool(void *qs_instance, void *message, connection *connection);
+unsigned int   qs_query_qs_information( void *qs_instance, qs_info *qs_information );
 
 #include "fast_buffer.h"
 
@@ -170,8 +170,6 @@ typedef struct _qs_context {
 	} ex_funcs;
 
 } qs_context;
-
-
 
 
 memory_manager *memory_manager_create(size_t pre_alloc_count, size_t size_of_buffer);
