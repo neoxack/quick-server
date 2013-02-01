@@ -9,8 +9,6 @@
 #include <ws2tcpip.h>
 #include <mswsock.h>
 
-#pragma comment(lib, "ws2_32.lib")
-
 
 // Unified socket address. For IPv6 support, add IPv6 address structure
 // in the union u.

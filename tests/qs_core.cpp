@@ -1,3 +1,22 @@
+#if defined(_WIN32)
+#define _CRT_SECURE_NO_WARNINGS // Disable deprecation warning in VS2005
+#endif
+
+#if defined (_MSC_VER)
+// conditional expression is constant: introduced by FD_SET(..)
+#pragma warning (disable : 4127)
+// non-constant aggregate initializer: issued due to missing C99 support
+#pragma warning (disable : 4204)
+#endif
+
+// Disable WIN32_LEAN_AND_MEAN.
+// This makes windows.h always include winsock2.h
+#ifdef WIN32_LEAN_AND_MEAN
+#undef WIN32_LEAN_AND_MEAN
+#endif
+
+#pragma comment(lib, "ws2_32.lib")
+
 #include "qs_core.h"
 
 #include <process.h>
@@ -60,24 +79,24 @@ void connection_list_remove(connection_list* list, connection *con)
 {
 	node *cur = list->head;
 	EnterCriticalSection(&list->cs);
-	
+
 	if(list->count == 1)
 	{
 		free(list->head);
 	}
 	else
-	while(cur->next != NULL)
-	{
-		if(cur->next->con == con)
+		while(cur->next != NULL)
 		{
-			node * d = cur->next;
-			cur->next = cur->next->next;
-			free(d);
+			if(cur->next->con == con)
+			{
+				node * d = cur->next;
+				cur->next = cur->next->next;
+				free(d);
+			}
+			cur = cur->next;
 		}
-		cur = cur->next;
-	}
-	list->count--;
-	LeaveCriticalSection(&list->cs);
+		list->count--;
+		LeaveCriticalSection(&list->cs);
 }
 
 void clear_inactive_connections(qs_context* context, time_t t)
@@ -113,7 +132,7 @@ static void cry(const char *fmt, ...)
 
 	seconds = time(NULL);
 	localtime_s(&timeinfo, &seconds);
-	
+
 	printf("[%02d:%02d:%02d %02d.%02d.%02d] %s\n", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec, timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year-100, buf);
 }
 
@@ -123,8 +142,8 @@ void sockaddr_to_string(char *buf, size_t len, const union usa *usa)
 	buf[0] = '\0';
 #if defined(USE_IPV6)
 	inet_ntop(usa->sa.sa_family, usa->sa.sa_family == AF_INET ?
-			(void *) &usa->sin.sin_addr :
-			(void *) &usa->sin6.sin6_addr, buf, len);
+		(void *) &usa->sin.sin_addr :
+	(void *) &usa->sin6.sin6_addr, buf, len);
 #elif defined(_WIN32)
 	// Only Windoze Vista (and newer) have inet_ntop()
 	strncpy(buf, inet_ntoa(usa->sin.sin_addr), len);
@@ -143,7 +162,7 @@ static int parse_port_string(const char *ptr, struct socket *so)
 
 	if (sscanf_s(ptr, "%d.%d.%d.%d:%d%n", &a, &b, &c, &d, &port, &len) == 5) 
 	{
-	// Bind to a specific IPv4 address
+		// Bind to a specific IPv4 address
 		so->lsa.sin.sin_addr.s_addr = htonl((a << 24) | (b << 16) | (c << 8) | d);
 	} 
 	else if (sscanf_s(ptr, "%d%n", &port, &len) != 1 || len <= 0)
@@ -189,7 +208,7 @@ memory_manager *memory_manager_create(size_t pre_alloc_count, size_t size_of_buf
 		free(res);
 		return NULL;
 	}
-	
+
 	res->buffer = buffer;
 	res->context_buf = context_buf;
 	return res;
@@ -221,11 +240,11 @@ void memory_manager_destroy(memory_manager *manager)
 __inline SOCKET socket_create(qs_info *info)
 {
 	SOCKET sock;
-	#if defined(USE_IPV6)
+#if defined(USE_IPV6)
 	sock = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
-    #else
+#else
 	sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	#endif
+#endif
 	InterlockedIncrement(&info->opened_sockets_count);
 	return sock;
 }
@@ -269,7 +288,7 @@ unsigned long  qs_create(void **qs_instance )
 	if(*qs_instance)
 	{
 		memset(*qs_instance, 0, sizeof(qs_instance));
-	
+
 		return ERROR_SUCCESS;
 	}
 	else return ERROR_ALLOCATE_BUCKET;
@@ -293,7 +312,7 @@ unsigned int qs_start( void *qs_instance, qs_params * params )
 	io_context *io_context;
 	struct socket so;
 	int on = 1;
-	
+
 	if(!qs_instance || !params) return ERROR_INVALID_PARAMETER;
 	server = (qs_context*)qs_instance;	
 	if(server->status == runned) return ERROR_ALREADY_EXISTS;
@@ -308,20 +327,11 @@ unsigned int qs_start( void *qs_instance, qs_params * params )
 		return GetLastError();
 	}
 
-	server->mem_manager = memory_manager_create(server->qs_params.expected_connections_amount,
-												(size_t)server->qs_params.connection_buffer_size);
-
-	if(!server->mem_manager)
-	{
-		cry("%s: memory_manager_create() fail",	__func__);
-		return ERROR_ALLOCATE_BUCKET;
-	}
 	server->connections = connection_list_new();
 
 	server->iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
 	if(!server->iocp) 
-	{
-		memory_manager_destroy(server->mem_manager);
+	{	
 		error = GetLastError();
 		WSACleanup();
 		cry("%s: CreateIoCompletionPort() fail with error: %d",	__func__, error);
@@ -329,8 +339,7 @@ unsigned int qs_start( void *qs_instance, qs_params * params )
 	}
 
 	if(!init_ex_funcs(server)) 
-	{
-		memory_manager_destroy(server->mem_manager);
+	{		
 		error = WSAGetLastError();
 		WSACleanup();
 		cry("%s: init_ex_funcs() fail with error: %d",	__func__, error);
@@ -339,31 +348,39 @@ unsigned int qs_start( void *qs_instance, qs_params * params )
 
 	if (!parse_port_string(params->listener.listen_adr, &so))
 	{
-		memory_manager_destroy(server->mem_manager);
 		WSACleanup();
 		cry("%s: invalid port spec.\nExpecting list of: %s",
 			__func__, "[IP_ADDRESS:]PORT[s|p]");
-    } 
+	} 
 	else if ((so.sock = socket(so.lsa.sa.sa_family, SOCK_STREAM, 6)) ==
-               INVALID_SOCKET ||
+		INVALID_SOCKET ||
 
-               // Set TCP keep-alive. This is needed because if HTTP-level
-               // keep-alive is enabled, and client resets the connection,
-               // server won't get TCP FIN or RST and will keep the connection
-               // open forever. With TCP keep-alive, next keep-alive
-               // handshake will figure out that the client is down and
-               // will close the server end.
-               setsockopt(so.sock, SOL_SOCKET, SO_KEEPALIVE, (char *) &on,
-                          sizeof(on)) != 0 ||
-               bind(so.sock, &so.lsa.sa, sizeof(so.lsa)) != 0 ||
-               listen(so.sock, SOMAXCONN) != 0)
+		// Set TCP keep-alive. This is needed because if HTTP-level
+		// keep-alive is enabled, and client resets the connection,
+		// server won't get TCP FIN or RST and will keep the connection
+		// open forever. With TCP keep-alive, next keep-alive
+		// handshake will figure out that the client is down and
+		// will close the server end.
+		setsockopt(so.sock, SOL_SOCKET, SO_KEEPALIVE, (char *) &on,
+		sizeof(on)) != 0 ||
+		bind(so.sock, &so.lsa.sa, sizeof(so.lsa)) != 0 ||
+		listen(so.sock, SOMAXCONN) != 0)
 	{
-		memory_manager_destroy(server->mem_manager);
 		closesocket(so.sock);
 		cry("%s: cannot bind to %s", __func__, params->listener.listen_adr);
-    } 
+	} 
 	else
 	{
+		server->mem_manager = memory_manager_create(server->qs_params.expected_connections_amount,
+			(size_t)server->qs_params.connection_buffer_size);
+
+		if(!server->mem_manager)
+		{
+			closesocket(so.sock);
+			cry("%s: memory_manager_create() fail",	__func__);
+			return ERROR_ALLOCATE_BUCKET;
+		}
+
 		memcpy(&server->qs_socket, &so, sizeof(so));
 		CreateIoCompletionPort((HANDLE)server->qs_socket.sock, server->iocp, server->qs_socket.sock, 0);
 
@@ -373,16 +390,16 @@ unsigned int qs_start( void *qs_instance, qs_params * params )
 		{
 			create_thread(working_thread, server, 256);
 		}
-	//	create_thread(cleaner_thread, server, 512);
+		//	create_thread(cleaner_thread, server, 512);
 
 		io_context = memory_manager_alloc(server->mem_manager);
 		io_context->ended_operation = start_server;
 
-		PostQueuedCompletionStatus(server->iocp, 8, (ULONG_PTR)&params->listener.init_accepts_count, (LPOVERLAPPED)io_context);
+		PostQueuedCompletionStatus(server->iocp, 8, 0, (LPOVERLAPPED)io_context);
 		server->status = runned;
 		return ERROR_SUCCESS;
 	}
-	
+
 	return GetLastError();
 }
 
@@ -400,8 +417,8 @@ unsigned int qs_send(connection *connection, BYTE *buffer, unsigned long len)
 	res = WSASend(connection->client.sock, &(context->wsa_buf), 1, &bytes_send, 0, (LPOVERLAPPED)context, 0);
 	if ((res == SOCKET_ERROR) && (WSA_IO_PENDING != (error = WSAGetLastError())))
 	{
-        return error;
-    }
+		return error;
+	}
 	return ERROR_SUCCESS;
 }
 
@@ -432,8 +449,8 @@ unsigned int qs_recv(connection *connection, BYTE *buffer, unsigned long len)
 	res = WSARecv(connection->client.sock, &(context->wsa_buf), 1, &bytes_recv, &flags, (LPOVERLAPPED)context, 0);
 	if ((res == SOCKET_ERROR) && (WSA_IO_PENDING != (error = WSAGetLastError())))
 	{
-        return error;
-    }
+		return error;
+	}
 	return ERROR_SUCCESS;
 }
 
@@ -568,9 +585,10 @@ unsigned __stdcall working_thread(void *s)
 			}
 			continue;
 		}
-		
+
 		if(io_context->ended_operation == on_connect) 
-		{		 
+		{	
+			accepts--;
 			//connection_list_add(server->connections, &io_context->connection.connection);
 			//InterlockedIncrement(&server->qs_info.connections_count);			
 			setsockopt(io_context->connection.connection.client.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
@@ -580,7 +598,7 @@ unsigned __stdcall working_thread(void *s)
 			getsockname(io_context->connection.connection.client.sock, &io_context->connection.connection.client.lsa.sa, &len);
 			len = sizeof(io_context->connection.connection.client.rsa.sa);
 			getpeername(io_context->connection.connection.client.sock, &io_context->connection.connection.client.rsa.sa, &len);
-			
+
 			if(CreateIoCompletionPort((HANDLE)io_context->connection.connection.client.sock, server->iocp, 0, 0) == NULL )
 			{
 				cry("%s: CreateIoCompletionPort() fail with error: %d",	__func__, GetLastError());
@@ -594,22 +612,22 @@ unsigned __stdcall working_thread(void *s)
 		{
 		case(send_done):
 			(*server->qs_params.callbacks.on_send)(&(io_context->connection.connection));
-				continue;
+			continue;
 
 		case(recv_done):
 			(*server->qs_params.callbacks.on_recv)(&(io_context->connection.connection));
-				continue;
+			continue;
 
 		case(transmit_file):
 			(*server->qs_params.callbacks.on_send_file)(&(io_context->connection.connection));
-				continue;
+			continue;
 
 		case(user_message):
 			(*server->qs_params.callbacks.on_message)(&(io_context->connection.connection), (void *)key);
-				continue;
+			continue;
 
 		case(start_server):
-			for(; accepts < max_accepts; ++accepts)
+			for(; accepts < server->qs_params.listener.init_accepts_count; ++accepts)
 			{
 				init_accept(server, buf);		
 			}
