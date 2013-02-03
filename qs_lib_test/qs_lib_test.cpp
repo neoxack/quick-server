@@ -1,16 +1,15 @@
-// tests.cpp: определяет точку входа для консольного приложения.
+// qs_lib_test.cpp: определяет точку входа для консольного приложения.
 //
-#include <conio.h>
 
 #include "stdafx.h"
-#include "qs_core.h"
+#include "qs_lib.h"
 
 #define COUNT 64000
 #define BUF_SIZE 4096
 
 static void *server;
 
-static BOOL on_connect1( connection *connection )
+static BOOL CALLBACK on_connect1( connection *connection )
 {
 	char buf1[64];
 	sockaddr_to_string(buf1, 64, &connection->client.rsa); 
@@ -22,14 +21,14 @@ static BOOL on_connect1( connection *connection )
 	return 1;
 }
 
-static void on_disconnect1( connection *connection )
+static void CALLBACK  on_disconnect1( connection *connection )
 {
 	char buf[128];
 	sockaddr_to_string(buf, 128, &connection->client.rsa); 
 	printf("%s disconnect\n", buf);
 }
 
-static BOOL on_recv( connection *connection)
+static BOOL CALLBACK  on_recv( connection *connection)
 {
 	char *html = "<!DOCTYPE html>\n"
 		"<html>"
@@ -56,16 +55,17 @@ static BOOL on_recv( connection *connection)
 	return 1;
 }
 
-static BOOL on_send( connection *connection)
+static BOOL CALLBACK on_send( connection *connection)
 {
 	if(qs_recv(connection, connection->buffer, BUF_SIZE)!=0)
 	{
 		qs_close_connection(server, connection);
 	}
+	//qs_close_connection(server, connection);
 	return 1;
 }
 
-static void on_error( wchar_t *func_name, unsigned long error )
+static void CALLBACK on_error( wchar_t *func_name, unsigned long error )
 {
 }
 
@@ -91,8 +91,8 @@ int _tmain()
 
 	qs_start(server, &params);
 
-	
-	_getch();
+
+	system("pause");
 	return 0;
 }
 

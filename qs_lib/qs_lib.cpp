@@ -1,3 +1,5 @@
+#include "qs_lib.h"
+
 #if defined(_WIN32)
 #define _CRT_SECURE_NO_WARNINGS // Disable deprecation warning in VS
 #endif
@@ -15,8 +17,6 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
-#include "qs_core.h"
-
 #include <process.h>
 #include <stdio.h>
 #include <time.h>
@@ -28,93 +28,57 @@
 #define __func__ __FUNCTION__
 #endif
 
-__forceinline io_context *get_context(connection *connection)
-{
-	ptrdiff_t  p = (ptrdiff_t)connection;
-	return (io_context *)(p - sizeof(OVERLAPPED));
-}
+#include "fast_buffer.h"
 
-connection_list* connection_list_new()
-{
-	connection_list* res = (connection_list*)malloc(sizeof(connection_list));
-	if(!res) return NULL;
+typedef struct _memory_manager {
+	fast_buf *context_buf;
+	fast_buf *buffer;
+} memory_manager;
 
+typedef enum _states {
+	send_done,
+	recv_done,
+	on_connect,
+	on_disconnect,
+	user_message,
+	transmit_file,
+	start_server,
+	start_clean
+} states;
 
-	res->count = 0;
-	res->head = NULL;
-	InitializeCriticalSection(&res->cs);
+typedef enum _qs_status {
+	not_runned,
+	runned
+} qs_status;
 
-	return res;
-}
+struct _io_context {
+	OVERLAPPED ov;
+	struct _connection connection;
+	states ended_operation;
+	WSABUF wsa_buf;
+	time_t last_activity;
+};
 
-void connection_list_delete(connection_list* list)
-{
-	node *cur = list->head;
-	while(cur != NULL)
-	{
-		node * d = cur;
-		cur = cur->next;
-		free(d);
-	}
-	free(list);
-}
+typedef struct _io_context io_context;
 
-void connection_list_add(connection_list* list, connection *con)
-{
-	node *new_node = (node *)malloc(sizeof(node));
-	if(new_node != NULL)
-	{
-		new_node->con = con;
-		EnterCriticalSection(&list->cs);
-		new_node->next = list->head;
-		list->head = new_node;
-		list->count++;
-		LeaveCriticalSection(&list->cs);
-	}
-}
+typedef struct _qs_context {
+	qs_status status;
+	qs_info qs_info;
+	HANDLE iocp;
+	//connection_list* connections;
+	struct socket qs_socket;
+	memory_manager *mem_manager;
+	qs_params qs_params;
 
-void connection_list_remove(connection_list* list, connection *con)
-{
-	node *cur = list->head;
-	EnterCriticalSection(&list->cs);
+	struct _ex_funcs {
+		LPFN_ACCEPTEX AcceptEx; 
+		LPFN_TRANSMITPACKETS TransmitPackets; 
+		LPFN_DISCONNECTEX DisconnectEx;
+		LPFN_TRANSMITFILE TransmitFile;
+	} ex_funcs;
 
-	if(list->count == 1)
-	{
-		free(list->head);
-	}
-	else
-		while(cur->next != NULL)
-		{
-			if(cur->next->con == con)
-			{
-				node * d = cur->next;
-				cur->next = cur->next->next;
-				free(d);
-			}
-			cur = cur->next;
-		}
-	list->count--;
-	LeaveCriticalSection(&list->cs);
-}
+} qs_context;
 
-void clear_inactive_connections(qs_context* context, time_t t)
-{
-	connection_list* list =  context->connections;
-	time_t now = time(NULL);
-	node *cur;
-	EnterCriticalSection(&list->cs);
-	cur = list->head;
-	while(cur != NULL)
-	{
-		io_context *cont = get_context(cur->con);
-		if(now - cont->last_activity > t)
-		{
-			qs_close_connection(context, cur->con);
-		}
-		cur = cur->next;
-	}
-	LeaveCriticalSection(&list->cs);
-}
 
 // Print error message
 static void cry(const char *fmt, ...) 
@@ -134,49 +98,10 @@ static void cry(const char *fmt, ...)
 	printf("[%02d:%02d:%02d %02d.%02d.%02d] %s\n", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec, timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year-100, buf);
 }
 
-
-void sockaddr_to_string(char *buf, size_t len, const union usa *usa) 
+__forceinline static io_context *get_context(connection *connection)
 {
-	buf[0] = '\0';
-#if defined(USE_IPV6)
-	inet_ntop(usa->sa.sa_family, usa->sa.sa_family == AF_INET ?
-		(void *) &usa->sin.sin_addr :
-	(void *) &usa->sin6.sin6_addr, buf, len);
-#elif defined(_WIN32)
-	// Only Windoze Vista (and newer) have inet_ntop()
-	strncpy(buf, inet_ntoa(usa->sin.sin_addr), len);
-#else
-	inet_ntop(usa->sa.sa_family, (void *) &usa->sin.sin_addr, buf, len);
-#endif
-}
-
-// Examples: 80, 127.0.0.1:3128
-// TODO(lsm): add parsing of the IPv6 address
-static int parse_port_string(const char *ptr, struct socket *so)
-{
-	int a, b, c, d, port, len;
-
-	memset(so, 0, sizeof(*so));
-
-	if (sscanf_s(ptr, "%d.%d.%d.%d:%d%n", &a, &b, &c, &d, &port, &len) == 5) 
-	{
-		// Bind to a specific IPv4 address
-		so->lsa.sin.sin_addr.s_addr = htonl((a << 24) | (b << 16) | (c << 8) | d);
-	} 
-	else if (sscanf_s(ptr, "%d%n", &port, &len) != 1 || len <= 0)
-	{
-		return 0;
-	}
-
-#if defined(USE_IPV6)
-	so->lsa.sin6.sin6_family = AF_INET6;
-	so->lsa.sin6.sin6_port = htons((u_short) port);
-#else
-	so->lsa.sin.sin_family = AF_INET;
-	so->lsa.sin.sin_port = htons((u_short)port);
-#endif
-
-	return 1;
+	ptrdiff_t  p = (ptrdiff_t)connection;
+	return (io_context *)(p - sizeof(OVERLAPPED));
 }
 
 static void create_thread(unsigned (__stdcall * start_addr) (void *), void * args, unsigned int stack_size)
@@ -232,8 +157,6 @@ void memory_manager_destroy(memory_manager *manager)
 	free(manager);
 }
 
-
-
 __inline SOCKET socket_create(qs_info *info)
 {
 	SOCKET sock;
@@ -278,7 +201,8 @@ static BOOL init_ex_funcs(qs_context* server)
 }
 
 
-unsigned long  qs_create(void **qs_instance )
+
+MYDLL_API unsigned long  qs_create(void **qs_instance )
 {
 	qs_context* context = (qs_context*)malloc(sizeof(qs_context));
 	*qs_instance = context;
@@ -291,15 +215,43 @@ unsigned long  qs_create(void **qs_instance )
 	else return ERROR_ALLOCATE_BUCKET;
 }
 
-void qs_delete(void *qs_instance )
+MYDLL_API void		     qs_delete(void *qs_instance )
 {
 	free(qs_instance);
 }
 
-unsigned __stdcall working_thread(void *s);
-unsigned __stdcall cleaner_thread(void *s);
+// Examples: 80, 127.0.0.1:3128
+// TODO(lsm): add parsing of the IPv6 address
+static int parse_port_string(const char *ptr, struct socket *so)
+{
+	int a, b, c, d, port, len;
 
-unsigned int qs_start( void *qs_instance, qs_params * params )
+	memset(so, 0, sizeof(*so));
+
+	if (sscanf_s(ptr, "%d.%d.%d.%d:%d%n", &a, &b, &c, &d, &port, &len) == 5) 
+	{
+		// Bind to a specific IPv4 address
+		so->lsa.sin.sin_addr.s_addr = htonl((a << 24) | (b << 16) | (c << 8) | d);
+	} 
+	else if (sscanf_s(ptr, "%d%n", &port, &len) != 1 || len <= 0)
+	{
+		return 0;
+	}
+
+#if defined(USE_IPV6)
+	so->lsa.sin6.sin6_family = AF_INET6;
+	so->lsa.sin6.sin6_port = htons((u_short) port);
+#else
+	so->lsa.sin.sin_family = AF_INET;
+	so->lsa.sin.sin_port = htons((u_short)port);
+#endif
+
+	return 1;
+}
+
+unsigned __stdcall working_thread(void *s);
+
+MYDLL_API unsigned int   qs_start( void *qs_instance, qs_params * params )
 {
 	WSADATA wsaData;
 	int result;
@@ -324,7 +276,7 @@ unsigned int qs_start( void *qs_instance, qs_params * params )
 		return GetLastError();
 	}
 
-	server->connections = connection_list_new();
+	//server->connections = connection_list_new();
 
 	server->iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
 	if(!server->iocp) 
@@ -400,7 +352,12 @@ unsigned int qs_start( void *qs_instance, qs_params * params )
 	return GetLastError();
 }
 
-unsigned int qs_send(connection *connection, BYTE *buffer, unsigned long len)
+MYDLL_API unsigned int   qs_stop( void *qs_instance )
+{
+	return ERROR_SUCCESS;
+}
+
+MYDLL_API unsigned int   qs_send(connection *connection, BYTE *buffer, unsigned long len)
 {
 	io_context *context;
 	int  res;
@@ -419,7 +376,7 @@ unsigned int qs_send(connection *connection, BYTE *buffer, unsigned long len)
 	return ERROR_SUCCESS;
 }
 
-unsigned int  qs_send_file(void *qs_instance, connection *connection, HANDLE file)
+MYDLL_API unsigned int   qs_send_file( void *qs_instance, connection *connection, HANDLE file)
 {
 	qs_context* server;	
 	io_context *context;
@@ -431,7 +388,7 @@ unsigned int  qs_send_file(void *qs_instance, connection *connection, HANDLE fil
 	return ERROR_SUCCESS;
 }
 
-unsigned int qs_recv(connection *connection, BYTE *buffer, unsigned long len)
+MYDLL_API unsigned int   qs_recv(connection *connection, BYTE *buffer, unsigned long len)
 {
 	io_context *context;
 	int res;
@@ -451,7 +408,7 @@ unsigned int qs_recv(connection *connection, BYTE *buffer, unsigned long len)
 	return ERROR_SUCCESS;
 }
 
-unsigned int  qs_close_connection( void *qs_instance, connection *connection )
+MYDLL_API unsigned int   qs_close_connection( void *qs_instance, connection *connection )
 {
 	qs_context* server;	
 	io_context *context;
@@ -463,7 +420,7 @@ unsigned int  qs_close_connection( void *qs_instance, connection *connection )
 	return ERROR_SUCCESS;
 }
 
-unsigned int qs_post_message_to_pool(void *qs_instance, void *message, connection *connection)
+MYDLL_API unsigned int   qs_post_message_to_pool(void *qs_instance, void *message, connection *connection)
 {
 	qs_context* server;	
 	io_context *context;
@@ -475,13 +432,28 @@ unsigned int qs_post_message_to_pool(void *qs_instance, void *message, connectio
 	return ERROR_SUCCESS;
 }
 
-unsigned int qs_query_qs_information( void *qs_instance, qs_info *qs_information )
+MYDLL_API unsigned int   qs_query_qs_information( void *qs_instance, qs_info *qs_information )
 {
 	qs_context *server;
 	if(!qs_instance || !qs_information) return ERROR_INVALID_PARAMETER;
 	server = (qs_context*)qs_instance;
 	memcpy(qs_information, &server->qs_info, sizeof(qs_info));
 	return ERROR_SUCCESS;
+}
+
+MYDLL_API void			 sockaddr_to_string(char *buf, size_t len, const union usa *usa) 
+{
+	buf[0] = '\0';
+#if defined(USE_IPV6)
+	inet_ntop(usa->sa.sa_family, usa->sa.sa_family == AF_INET ?
+		(void *) &usa->sin.sin_addr :
+	(void *) &usa->sin6.sin6_addr, buf, len);
+#elif defined(_WIN32)
+	// Only Windoze Vista (and newer) have inet_ntop()
+	strncpy(buf, inet_ntoa(usa->sin.sin_addr), len);
+#else
+	inet_ntop(usa->sa.sa_family, (void *) &usa->sin.sin_addr, buf, len);
+#endif
 }
 
 static void init_accept(qs_context *server, BYTE *out_buf)
@@ -527,22 +499,6 @@ static void set_keep_alive(connection *con, u_long  keepalivetime, u_long keepal
 	}	
 }
 
-unsigned __stdcall cleaner_thread(void *s) 
-{
-	qs_context *server = (qs_context *)s;
-
-	io_context *context = memory_manager_alloc(server->mem_manager);
-	if(context != NULL)
-	{
-		for(;;)
-		{
-			Sleep(10000);
-			context->ended_operation = start_clean;
-			PostQueuedCompletionStatus(server->iocp, 8, (uintptr_t)0, (LPOVERLAPPED)context);
-		}
-	}
-	return 0;
-}
 
 unsigned __stdcall working_thread(void *s) 
 {
@@ -631,11 +587,28 @@ unsigned __stdcall working_thread(void *s)
 			memory_manager_free(server->mem_manager, io_context);
 			continue;
 		case(start_clean):
-			clear_inactive_connections(server, 20);
+			//clear_inactive_connections(server, 20);
 			continue;
 		}
 
 	}
 
 	return 0;
+}
+
+
+BOOL APIENTRY DllMain( HMODULE hModule,
+					  DWORD  ul_reason_for_call,
+					  LPVOID lpReserved
+					  )
+{
+	switch (ul_reason_for_call)
+	{
+	case DLL_PROCESS_ATTACH:
+	case DLL_THREAD_ATTACH:
+	case DLL_THREAD_DETACH:
+	case DLL_PROCESS_DETACH:
+		break;
+	}
+	return TRUE;
 }

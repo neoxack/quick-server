@@ -100,3 +100,4 @@ void fast_buf_destroy(fast_buf *buf)
 	free(buf->mem);
 	free(buf);
 }
+
