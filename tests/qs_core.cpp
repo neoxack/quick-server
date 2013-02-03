@@ -1,10 +1,8 @@
 #if defined(_WIN32)
-#define _CRT_SECURE_NO_WARNINGS // Disable deprecation warning in VS2005
+#define _CRT_SECURE_NO_WARNINGS // Disable deprecation warning in VS
 #endif
 
 #if defined (_MSC_VER)
-// conditional expression is constant: introduced by FD_SET(..)
-#pragma warning (disable : 4127)
 // non-constant aggregate initializer: issued due to missing C99 support
 #pragma warning (disable : 4204)
 #endif
@@ -32,8 +30,8 @@
 
 __forceinline io_context *get_context(connection *connection)
 {
-	extend_connection *ext_conn = (extend_connection *)connection;
-	return ext_conn->io_context;
+	ptrdiff_t  p = (ptrdiff_t)connection;
+	return (io_context *)(p - sizeof(OVERLAPPED));
 }
 
 connection_list* connection_list_new()
@@ -95,8 +93,8 @@ void connection_list_remove(connection_list* list, connection *con)
 			}
 			cur = cur->next;
 		}
-		list->count--;
-		LeaveCriticalSection(&list->cs);
+	list->count--;
+	LeaveCriticalSection(&list->cs);
 }
 
 void clear_inactive_connections(qs_context* context, time_t t)
@@ -217,14 +215,13 @@ memory_manager *memory_manager_create(size_t pre_alloc_count, size_t size_of_buf
 io_context *memory_manager_alloc(memory_manager *manager)
 {
 	io_context *io_cont = (io_context *)fast_buf_alloc(manager->context_buf);
-	io_cont->connection.connection.buffer = (BYTE *)fast_buf_alloc(manager->buffer);
-	io_cont->connection.io_context = io_cont;
+	io_cont->connection.buffer = (BYTE *)fast_buf_alloc(manager->buffer);
 	return io_cont;
 }
 
 void memory_manager_free(memory_manager *manager, io_context *io_context)
 {
-	fast_buf_free(manager->buffer, io_context->connection.connection.buffer);
+	fast_buf_free(manager->buffer, io_context->connection.buffer);
 	fast_buf_free(manager->context_buf, io_context);
 }
 
@@ -497,9 +494,9 @@ static void init_accept(qs_context *server, BYTE *out_buf)
 	{
 		client = socket_create(&server->qs_info);
 		new_context->ended_operation = on_connect;
-		new_context->connection.connection.client.sock = client;
+		new_context->connection.client.sock = client;
 
-		if(server->ex_funcs.AcceptEx(server->qs_socket.sock, new_context->connection.connection.client.sock, out_buf, 0, sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16, 
+		if(server->ex_funcs.AcceptEx(server->qs_socket.sock, new_context->connection.client.sock, out_buf, 0, sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16, 
 			&bytes_transferred, (LPOVERLAPPED)new_context) != 0)
 		{
 			cry("%s: AcceptEx() fail with error: %d",	__func__, WSAGetLastError());
@@ -576,8 +573,8 @@ unsigned __stdcall working_thread(void *s)
 		if(!bytes_transferred && io_context->ended_operation != on_connect)
 		{
 			//connection_list_remove(server->connections, &io_context->connection.connection);
-			(*server->qs_params.callbacks.on_disconnect)((connection *)&io_context->connection);
-			socket_close(io_context->connection.connection.client.sock, &server->qs_info);
+			(*server->qs_params.callbacks.on_disconnect)(&io_context->connection);
+			socket_close(io_context->connection.client.sock, &server->qs_info);
 			memory_manager_free(server->mem_manager, io_context);
 			for(; accepts < max_accepts; ++accepts)
 			{
@@ -591,39 +588,39 @@ unsigned __stdcall working_thread(void *s)
 			accepts--;
 			//connection_list_add(server->connections, &io_context->connection.connection);
 			//InterlockedIncrement(&server->qs_info.connections_count);			
-			setsockopt(io_context->connection.connection.client.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
+			setsockopt(io_context->connection.client.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
 				(char *)&server->qs_socket, sizeof(server->qs_socket) );
-			set_keep_alive(&io_context->connection.connection, server->qs_params.keep_alive_time, server->qs_params.keep_alive_interval);
-			len = sizeof(io_context->connection.connection.client.lsa.sa);
-			getsockname(io_context->connection.connection.client.sock, &io_context->connection.connection.client.lsa.sa, &len);
-			len = sizeof(io_context->connection.connection.client.rsa.sa);
-			getpeername(io_context->connection.connection.client.sock, &io_context->connection.connection.client.rsa.sa, &len);
+			set_keep_alive(&io_context->connection, server->qs_params.keep_alive_time, server->qs_params.keep_alive_interval);
+			len = sizeof(io_context->connection.client.lsa.sa);
+			getsockname(io_context->connection.client.sock, &io_context->connection.client.lsa.sa, &len);
+			len = sizeof(io_context->connection.client.rsa.sa);
+			getpeername(io_context->connection.client.sock, &io_context->connection.client.rsa.sa, &len);
 
-			if(CreateIoCompletionPort((HANDLE)io_context->connection.connection.client.sock, server->iocp, 0, 0) == NULL )
+			if(CreateIoCompletionPort((HANDLE)io_context->connection.client.sock, server->iocp, 0, 0) == NULL )
 			{
 				cry("%s: CreateIoCompletionPort() fail with error: %d",	__func__, GetLastError());
 			}
-			(*server->qs_params.callbacks.on_connect)(&(io_context->connection.connection));
+			(*server->qs_params.callbacks.on_connect)(&(io_context->connection));
 			continue;
 		}
 
-		io_context->connection.connection.bytes_transferred = bytes_transferred;
+		io_context->connection.bytes_transferred = bytes_transferred;
 		switch(io_context->ended_operation) 
 		{
 		case(send_done):
-			(*server->qs_params.callbacks.on_send)(&(io_context->connection.connection));
+			(*server->qs_params.callbacks.on_send)(&(io_context->connection));
 			continue;
 
 		case(recv_done):
-			(*server->qs_params.callbacks.on_recv)(&(io_context->connection.connection));
+			(*server->qs_params.callbacks.on_recv)(&(io_context->connection));
 			continue;
 
 		case(transmit_file):
-			(*server->qs_params.callbacks.on_send_file)(&(io_context->connection.connection));
+			(*server->qs_params.callbacks.on_send_file)(&(io_context->connection));
 			continue;
 
 		case(user_message):
-			(*server->qs_params.callbacks.on_message)(&(io_context->connection.connection), (void *)key);
+			(*server->qs_params.callbacks.on_message)(&(io_context->connection), (void *)key);
 			continue;
 
 		case(start_server):
@@ -639,7 +636,6 @@ unsigned __stdcall working_thread(void *s)
 		}
 
 	}
-
 
 	return 0;
 }

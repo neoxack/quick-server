@@ -42,7 +42,6 @@ static BOOL on_recv( connection *connection)
 		"</body>"
 		"</html>";
 
-	
 	char *response = "HTTP/1.0 200 OK\r\n"
 		"Content-Type: text/html; charset=utf-8\r\n"
 		"Content-Length: %d\r\n\r\n";
@@ -63,7 +62,6 @@ static BOOL on_send( connection *connection)
 	{
 		qs_close_connection(server, connection);
 	}
-	//qs_close_connection(server, connection);
 	return 1;
 }
 

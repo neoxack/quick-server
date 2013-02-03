@@ -4,8 +4,6 @@
 #define UNICODE
 #endif
 
-//#define USE_IPV6
-
 #include <ws2tcpip.h>
 #include <mswsock.h>
 
@@ -52,25 +50,16 @@ struct _connection {
 	void *user_data;
 };
 
-
-struct _io_context;
-
-struct _extend_connection {
-	struct _connection connection;
-	struct _io_context *io_context;
-};
-
 struct _io_context {
 	OVERLAPPED ov;
+	struct _connection connection;
 	states ended_operation;
-	struct _extend_connection connection;
 	WSABUF wsa_buf;
 	time_t last_activity;
 };
 
 typedef struct _connection connection;
 typedef struct _io_context io_context;
-typedef struct _extend_connection extend_connection;
 
 typedef struct _qs_info {
 	volatile long opened_sockets_count;
