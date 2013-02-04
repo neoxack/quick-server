@@ -1,10 +1,7 @@
-// qs_lib_test.cpp: определяет точку входа для консольного приложения.
-//
-
 #include "stdafx.h"
 #include "qs_lib.h"
 
-#define COUNT 64000
+#define COUNT 10000
 #define BUF_SIZE 4096
 
 static void *server;
@@ -61,18 +58,19 @@ static BOOL CALLBACK on_send( connection *connection)
 	{
 		qs_close_connection(server, connection);
 	}
-	//qs_close_connection(server, connection);
 	return 1;
 }
 
-static void CALLBACK on_error( wchar_t *func_name, unsigned long error )
+static void CALLBACK on_error( wchar_t *error)
 {
+	wprintf(L"%s", error);
 }
 
 int _tmain()
 {
+	u_int res;
 	qs_params params = {0};
-	qs_create(&server);
+	
 
 	params.worker_threads_count = 6;
 	params.expected_connections_amount = COUNT;
@@ -88,11 +86,15 @@ int _tmain()
 	params.callbacks.on_send = on_send;
 	params.callbacks.on_error = on_error;
 
-
-	qs_start(server, &params);
-	Sleep(15000);
-	qs_stop(server);
-
+	qs_create(&server);
+	res = qs_start(server, &params);
+	if(res == 0)
+	{
+		printf("%s", "Server started\n");
+		system("pause");
+		qs_stop(server);
+		printf("%s", "Server stopped\n");
+	}
 
 	system("pause");
 	return 0;

@@ -22,7 +22,7 @@
 #include <time.h>
 #include <Mstcpip.h>
 
-#define BUF_LEN 512
+#define BUF_LEN 256
 
 #ifdef _MSC_VER
 #define __func__ __FUNCTION__
@@ -82,24 +82,31 @@ typedef struct _qs_context {
 
 
 // Print error message
-static void cry(const char *fmt, ...) 
+static void cry(qs_context* server, const char *fmt, ...) 
 {
 	char buf[BUF_LEN];
+	wchar_t widechar_buf[BUF_LEN];
+	wchar_t buf_on_error[BUF_LEN];
 	va_list ap;
 	time_t seconds;
 	struct tm timeinfo;
+	size_t convertedChars;
 
 	va_start(ap, fmt);
 	vsnprintf(buf, sizeof(buf), fmt, ap);
 	va_end(ap);
 
+	convertedChars = 0;
+	mbstowcs_s(&convertedChars, widechar_buf, strlen(buf) + 1, buf, BUF_LEN);
+
 	seconds = time(NULL);
 	localtime_s(&timeinfo, &seconds);
 
-	printf("[%02d:%02d:%02d %02d.%02d.%02d] %s\n", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec, timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year-100, buf);
+	wsprintf(buf_on_error, L"[%02d:%02d:%02d %02d.%02d.%02d] %s\n", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec, timeinfo.tm_mday, timeinfo.tm_mon + 1, timeinfo.tm_year-100, widechar_buf);
+	server->qs_params.callbacks.on_error(buf_on_error);
 }
 
-__forceinline static io_context *get_context(connection *connection)
+__inline static io_context *get_context(connection *connection)
 {
 	ptrdiff_t  p = (ptrdiff_t)connection;
 	return (io_context *)(p - sizeof(OVERLAPPED));
@@ -112,7 +119,7 @@ static uintptr_t create_thread(unsigned (__stdcall * start_addr) (void *), void 
 	return thread;
 }
 
-memory_manager *memory_manager_create(size_t pre_alloc_count, size_t size_of_buffer)
+static memory_manager *memory_manager_create(size_t pre_alloc_count, size_t size_of_buffer)
 {
 	fast_buf *context_buf;
 	fast_buf *buffer;
@@ -138,20 +145,20 @@ memory_manager *memory_manager_create(size_t pre_alloc_count, size_t size_of_buf
 	return res;
 }
 
-io_context *memory_manager_alloc(memory_manager *manager)
+static io_context *memory_manager_alloc(memory_manager *manager)
 {
 	io_context *io_cont = (io_context *)fast_buf_alloc(manager->context_buf);
 	io_cont->connection.buffer = (BYTE *)fast_buf_alloc(manager->buffer);
 	return io_cont;
 }
 
-void memory_manager_free(memory_manager *manager, io_context *io_context)
+static void memory_manager_free(memory_manager *manager, io_context *io_context)
 {
 	fast_buf_free(manager->buffer, io_context->connection.buffer);
 	fast_buf_free(manager->context_buf, io_context);
 }
 
-void memory_manager_destroy(memory_manager *manager)
+static void memory_manager_destroy(memory_manager *manager)
 {
 	fast_buf_destroy(manager->buffer);
 	fast_buf_destroy(manager->context_buf);
@@ -216,9 +223,10 @@ MYDLL_API unsigned long qs_create(void **qs_instance )
 		result = WSAStartup(MAKEWORD(2,2), &wsaData);
 		if (result != 0) 
 		{
-			cry("%s: WSAStartup() fail with error: %d",
-				__func__, GetLastError());
-			return GetLastError();
+			error = GetLastError();
+			cry(server, "%s: WSAStartup() fail with error: %d",
+				__func__, error);
+			return error;
 		}
 
 		//server->connections = connection_list_new();
@@ -228,16 +236,16 @@ MYDLL_API unsigned long qs_create(void **qs_instance )
 		{	
 			error = GetLastError();
 			WSACleanup();
-			cry("%s: CreateIoCompletionPort() fail with error: %d",	__func__, error);
+			cry(server, "%s: CreateIoCompletionPort() fail with error: %d",	__func__, error);
 			return error;
 		}
 
 		if(!init_ex_funcs(server)) 
-		{	
-			CloseHandle(server->iocp);
+		{		
 			error = WSAGetLastError();
+			CloseHandle(server->iocp);
 			WSACleanup();
-			cry("%s: init_ex_funcs() fail with error: %d",	__func__, error);
+			cry(server, "%s: init_ex_funcs() fail with error: %d",	__func__, error);
 			return error;
 		}
 
@@ -286,7 +294,7 @@ unsigned __stdcall working_thread(void *s);
 MYDLL_API unsigned int qs_start( void *qs_instance, qs_params * params )
 {
 	qs_context* server;
-	unsigned int i;
+	size_t i;
 	io_context *io_context;
 	struct socket so;
 	int on = 1;
@@ -300,10 +308,11 @@ MYDLL_API unsigned int qs_start( void *qs_instance, qs_params * params )
 	if (!parse_port_string(params->listener.listen_adr, &so))
 	{
 		WSACleanup();
-		cry("%s: invalid port spec.\nExpecting list of: %s",
+		cry(server, "%s: invalid port spec.\nExpecting list of: %s",
 			__func__, "[IP_ADDRESS:]PORT[s|p]");
+		return ERROR_INVALID_PARAMETER;
 	} 
-	else if ((so.sock = socket(so.lsa.sa.sa_family, SOCK_STREAM, 6)) ==
+	if ((so.sock = socket(so.lsa.sa.sa_family, SOCK_STREAM, 6)) ==
 		INVALID_SOCKET ||
 
 		// Set TCP keep-alive. This is needed because if HTTP-level
@@ -317,52 +326,51 @@ MYDLL_API unsigned int qs_start( void *qs_instance, qs_params * params )
 		bind(so.sock, &so.lsa.sa, sizeof(so.lsa)) != 0 ||
 		listen(so.sock, SOMAXCONN) != 0)
 	{
+		u_int error = GetLastError();
 		closesocket(so.sock);
-		cry("%s: cannot bind to %s", __func__, params->listener.listen_adr);
+		cry(server, "%s: cannot bind to %s", __func__, params->listener.listen_adr);
+		return error;
 	} 
-	else
+
+	server->mem_manager = memory_manager_create(server->qs_params.expected_connections_amount,
+		(size_t)server->qs_params.connection_buffer_size);
+
+	if(!server->mem_manager)
 	{
-		server->mem_manager = memory_manager_create(server->qs_params.expected_connections_amount,
-			(size_t)server->qs_params.connection_buffer_size);
-
-		if(!server->mem_manager)
-		{
-			closesocket(so.sock);
-			cry("%s: memory_manager_create() fail",	__func__);
-			return ERROR_ALLOCATE_BUCKET;
-		}
-
-		memcpy(&server->qs_socket, &so, sizeof(so));
-		CreateIoCompletionPort((HANDLE)server->qs_socket.sock, server->iocp, server->qs_socket.sock, 0);
-
-		server->qs_info.sockets_count = 0;
-
-		server->threads = (uintptr_t *)malloc(sizeof(uintptr_t) * server->qs_params.worker_threads_count);
-
-		for(i = 0; i<server->qs_params.worker_threads_count; ++i)
-		{
-			server->threads[i] = create_thread(working_thread, server, THREAD_STACK_SIZE);
-		}
-		//	create_thread(cleaner_thread, server, 512);
-
-		io_context = memory_manager_alloc(server->mem_manager);
-		io_context->ended_operation = start_server;
-
-		PostQueuedCompletionStatus(server->iocp, 8, 0, (LPOVERLAPPED)io_context);
-		server->status = runned;
-		return ERROR_SUCCESS;
+		closesocket(so.sock);
+		cry(server, "%s: memory_manager_create() fail",	__func__);
+		return ERROR_ALLOCATE_BUCKET;
 	}
 
-	return GetLastError();
+	memcpy(&server->qs_socket, &so, sizeof(so));
+	CreateIoCompletionPort((HANDLE)server->qs_socket.sock, server->iocp, server->qs_socket.sock, 0);
+
+	server->qs_info.sockets_count = 0;
+
+	server->threads = (uintptr_t *)malloc(sizeof(uintptr_t) * (size_t)server->qs_params.worker_threads_count);
+
+	for(i = 0; i<(size_t)server->qs_params.worker_threads_count; ++i)
+	{
+		server->threads[i] = create_thread(working_thread, server, THREAD_STACK_SIZE);
+	}
+	//	create_thread(cleaner_thread, server, 512);
+
+	io_context = memory_manager_alloc(server->mem_manager);
+	io_context->ended_operation = start_server;
+
+	PostQueuedCompletionStatus(server->iocp, 8, 0, (LPOVERLAPPED)io_context);
+	server->status = runned;
+	return ERROR_SUCCESS;
+
 }
 
 
 MYDLL_API unsigned int qs_stop( void *qs_instance )
 {
 	qs_context* server = (qs_context*)qs_instance;
-	u_int i;
+	size_t i;
 
-	for(i = 0; i<server->qs_params.worker_threads_count; i++)
+	for(i = 0; i<(size_t)server->qs_params.worker_threads_count; i++)
 	{
 		io_context *io_context = memory_manager_alloc(server->mem_manager);
 		io_context->ended_operation = stop_server;
@@ -370,7 +378,7 @@ MYDLL_API unsigned int qs_stop( void *qs_instance )
 	}
 
 	WaitForMultipleObjects(server->qs_params.worker_threads_count, (HANDLE *)server->threads, TRUE, INFINITE);
-	for(i = 0; i<server->qs_params.worker_threads_count; i++)
+	for(i = 0; i<(size_t)server->qs_params.worker_threads_count; i++)
 	{
 		CloseHandle((HANDLE)server->threads[i]);
 	}
@@ -382,7 +390,7 @@ MYDLL_API unsigned int qs_stop( void *qs_instance )
 	server->qs_info.sockets_count = 0;
 	server->qs_info.active_connections_count = 0;
 	server->status = not_runned;
-	
+
 	return ERROR_SUCCESS;
 }
 
@@ -500,7 +508,7 @@ static void init_accept(qs_context *server, BYTE *out_buf)
 		if(server->ex_funcs.AcceptEx(server->qs_socket.sock, new_context->connection.client.sock, out_buf, 0, sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16, 
 			&bytes_transferred, (LPOVERLAPPED)new_context) != 0)
 		{
-			cry("%s: AcceptEx() fail with error: %d",	__func__, WSAGetLastError());
+			cry(server, "%s: AcceptEx() fail with error: %d",	__func__, WSAGetLastError());
 		}
 	}
 }
@@ -521,10 +529,6 @@ static void set_keep_alive(connection *con, u_long  keepalivetime, u_long keepal
 
 		dwRet = WSAIoctl(con->client.sock, SIO_KEEPALIVE_VALS, &alive, sizeof(alive),
 			NULL, 0, &dwSize, (LPOVERLAPPED)context, NULL);
-		if (dwRet == SOCKET_ERROR)
-		{
-			cry("%s: WSAIoctl() fail with error: %d", __func__, WSAGetLastError());
-		}
 	}	
 }
 
@@ -546,11 +550,11 @@ unsigned __stdcall working_thread(void *s)
 		{
 			if(io_context != NULL)
 			{
-				cry("%s: GetQueuedCompletionStatus() fail with error: %d",	__func__, GetLastError());
+				cry(server, "%s: GetQueuedCompletionStatus() fail with error: %d",	__func__, GetLastError());
 			}
 			else
 			{
-				cry("%s: GetQueuedCompletionStatus() fail, io_context == NULL");
+				cry(server, "%s: GetQueuedCompletionStatus() fail, io_context == NULL");
 			}
 			break;
 		}
@@ -585,7 +589,7 @@ unsigned __stdcall working_thread(void *s)
 
 			if(CreateIoCompletionPort((HANDLE)io_context->connection.client.sock, server->iocp, 0, 0) == NULL )
 			{
-				cry("%s: CreateIoCompletionPort() fail with error: %d",	__func__, GetLastError());
+				cry(server, "%s: CreateIoCompletionPort() fail with error: %d",	__func__, GetLastError());
 			}
 			(*server->qs_params.callbacks.on_connect)(&(io_context->connection));
 			continue;
@@ -626,7 +630,7 @@ unsigned __stdcall working_thread(void *s)
 		}
 
 	}
-	exit:
+exit:
 
 	return 0;
 }

@@ -15,8 +15,7 @@
 #include <ws2tcpip.h>
 #include <mswsock.h>
 
-// Unified socket address. For IPv6 support, add IPv6 address structure
-// in the union u.
+// Unified socket address.
 union usa {
 	struct sockaddr sa;
 	struct sockaddr_in sin;
@@ -30,8 +29,6 @@ struct socket {
 	SOCKET sock;          // Listening socket
 	union usa lsa;        // Local socket address
 	union usa rsa;        // Remote socket address
-	// unsigned is_ssl:1;    // Is port SSL-ed
-	// unsigned ssl_redir:1; // Is port supposed to redirect everything to SSL port
 };
 
 struct _connection {
@@ -43,16 +40,13 @@ struct _connection {
 
 typedef struct _connection connection;
 
-// 
 // Callback functions.
-//
 typedef BOOL (CALLBACK *ON_CONNECT_PROC)( connection *connection );
 typedef void (CALLBACK *ON_DISCONNECT_PROC)( connection *connection );
-//typedef void (*ON_REMOVE_CONNECTION_PROC)( connection *connection );
 typedef BOOL (CALLBACK *ON_RECV_PROC)( connection *connection);
 typedef BOOL (CALLBACK *ON_SEND_PROC)( connection *connection);
 typedef BOOL (CALLBACK *ON_SENDFILE_PROC)( connection *connection);
-typedef void (CALLBACK *ON_ERROR_PROC)( wchar_t *str_error, unsigned long error );
+typedef void (CALLBACK *ON_ERROR_PROC)( wchar_t *str_error);
 typedef void (CALLBACK *USERMESSAGE_HANDLER_PROC)(connection *connection, void *message);
 
 typedef struct _qs_params {
@@ -84,12 +78,7 @@ typedef struct _qs_info {
 	volatile u_long active_connections_count;
 } qs_info;
 
-
-
-// 
 // Server functions.
-//
-
 MYDLL_API unsigned long  qs_create(void **qs_instance );
 MYDLL_API void		     qs_delete(void *qs_instance );
 MYDLL_API unsigned int   qs_start( void *qs_instance, qs_params * params );
