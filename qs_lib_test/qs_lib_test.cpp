@@ -90,6 +90,8 @@ int _tmain()
 
 
 	qs_start(server, &params);
+	Sleep(15000);
+	qs_stop(server);
 
 
 	system("pause");

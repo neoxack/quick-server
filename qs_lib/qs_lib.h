@@ -80,7 +80,8 @@ typedef struct _qs_params {
 } qs_params;
 
 typedef struct _qs_info {
-	volatile long opened_sockets_count;
+	volatile u_long sockets_count;
+	volatile u_long active_connections_count;
 } qs_info;
 
 

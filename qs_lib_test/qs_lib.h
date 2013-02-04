@@ -1,6 +1,5 @@
 #pragma once
 
-
 #ifdef MYDLL_EXPORTS
 #define MYDLL_API extern "C" __declspec(dllexport)
 #else
@@ -79,7 +78,8 @@ typedef struct _qs_params {
 } qs_params;
 
 typedef struct _qs_info {
-	volatile long opened_sockets_count;
+	volatile u_long opened_sockets_count;
+	volatile u_long active_connections_count;
 } qs_info;
 
 
@@ -87,7 +87,6 @@ typedef struct _qs_info {
 // 
 // Server functions.
 //
-extern "C" {
 
 MYDLL_API unsigned long  qs_create(void **qs_instance );
 MYDLL_API void		     qs_delete(void *qs_instance );
@@ -100,5 +99,3 @@ MYDLL_API unsigned int   qs_close_connection( void *qs_instance, connection *con
 MYDLL_API unsigned int   qs_post_message_to_pool(void *qs_instance, void *message, connection *connection);
 MYDLL_API unsigned int   qs_query_qs_information( void *qs_instance, qs_info *qs_information );
 MYDLL_API void			 sockaddr_to_string(char *buf, size_t len, const union usa *usa) ;
-
-};

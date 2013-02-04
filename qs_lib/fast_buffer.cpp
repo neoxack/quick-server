@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #define BYTE unsigned char
+#define SPIN_COUNT 4000
 
 fast_buf* fast_buf_create(size_t size_of_element, size_t count_of_elements)
 {
@@ -36,7 +37,7 @@ fast_buf* fast_buf_create(size_t size_of_element, size_t count_of_elements)
 	*((BYTE**)(lastChunk + size_of_element)) = NULL; /* terminating NULL */
 
 	buffer->head = buffer->mem;
-	InitializeCriticalSection(&buffer->cs);
+	InitializeCriticalSectionAndSpinCount(&buffer->cs, SPIN_COUNT);
 	return buffer;
 }
 
@@ -97,7 +98,8 @@ void fast_buf_clear(fast_buf *buffer)
 void fast_buf_destroy(fast_buf *buf)
 {
 	if(!buf) return;
+	DeleteCriticalSection(&buf->cs);
 	free(buf->mem);
-	free(buf);
+	free(buf);	
 }
 

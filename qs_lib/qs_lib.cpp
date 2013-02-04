@@ -22,7 +22,7 @@
 #include <time.h>
 #include <Mstcpip.h>
 
-#define BUF_LEN 4096
+#define BUF_LEN 512
 
 #ifdef _MSC_VER
 #define __func__ __FUNCTION__
@@ -43,7 +43,8 @@ typedef enum _states {
 	user_message,
 	transmit_file,
 	start_server,
-	start_clean
+	start_clean,
+	stop_server
 } states;
 
 typedef enum _qs_status {
@@ -65,7 +66,7 @@ typedef struct _qs_context {
 	qs_status status;
 	qs_info qs_info;
 	HANDLE iocp;
-	//connection_list* connections;
+	uintptr_t *threads;
 	struct socket qs_socket;
 	memory_manager *mem_manager;
 	qs_params qs_params;
@@ -104,11 +105,11 @@ __forceinline static io_context *get_context(connection *connection)
 	return (io_context *)(p - sizeof(OVERLAPPED));
 }
 
-static void create_thread(unsigned (__stdcall * start_addr) (void *), void * args, unsigned int stack_size)
+static uintptr_t create_thread(unsigned (__stdcall * start_addr) (void *), void * args, unsigned int stack_size)
 {
-	unsigned threadID;
+	unsigned int threadID;
 	uintptr_t thread = _beginthreadex(NULL, stack_size, start_addr, args, 0, &threadID );
-	CloseHandle((HANDLE)thread);
+	return thread;
 }
 
 memory_manager *memory_manager_create(size_t pre_alloc_count, size_t size_of_buffer)
@@ -165,14 +166,14 @@ __inline SOCKET socket_create(qs_info *info)
 #else
 	sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 #endif
-	InterlockedIncrement(&info->opened_sockets_count);
+	InterlockedIncrement(&info->sockets_count);
 	return sock;
 }
 
 __inline void socket_close(SOCKET sock, qs_info *info)
 {
 	closesocket(sock);
-	InterlockedDecrement(&info->opened_sockets_count);
+	InterlockedDecrement(&info->sockets_count);
 }
 
 static BOOL init_ex_funcs(qs_context* server)
@@ -200,22 +201,52 @@ static BOOL init_ex_funcs(qs_context* server)
 	return res;
 }
 
-
-
-MYDLL_API unsigned long  qs_create(void **qs_instance )
+MYDLL_API unsigned long qs_create(void **qs_instance )
 {
-	qs_context* context = (qs_context*)malloc(sizeof(qs_context));
-	*qs_instance = context;
+	int result;
+	int error;
+	WSADATA wsaData;
+	qs_context* server = (qs_context*)malloc(sizeof(qs_context));
+	*qs_instance = server;
+
 	if(*qs_instance)
 	{
 		memset(*qs_instance, 0, sizeof(qs_instance));
+
+		result = WSAStartup(MAKEWORD(2,2), &wsaData);
+		if (result != 0) 
+		{
+			cry("%s: WSAStartup() fail with error: %d",
+				__func__, GetLastError());
+			return GetLastError();
+		}
+
+		//server->connections = connection_list_new();
+
+		server->iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
+		if(!server->iocp) 
+		{	
+			error = GetLastError();
+			WSACleanup();
+			cry("%s: CreateIoCompletionPort() fail with error: %d",	__func__, error);
+			return error;
+		}
+
+		if(!init_ex_funcs(server)) 
+		{	
+			CloseHandle(server->iocp);
+			error = WSAGetLastError();
+			WSACleanup();
+			cry("%s: init_ex_funcs() fail with error: %d",	__func__, error);
+			return error;
+		}
 
 		return ERROR_SUCCESS;
 	}
 	else return ERROR_ALLOCATE_BUCKET;
 }
 
-MYDLL_API void		     qs_delete(void *qs_instance )
+MYDLL_API void qs_delete(void *qs_instance )
 {
 	free(qs_instance);
 }
@@ -249,13 +280,11 @@ static int parse_port_string(const char *ptr, struct socket *so)
 	return 1;
 }
 
+#define THREAD_STACK_SIZE 256
 unsigned __stdcall working_thread(void *s);
 
-MYDLL_API unsigned int   qs_start( void *qs_instance, qs_params * params )
+MYDLL_API unsigned int qs_start( void *qs_instance, qs_params * params )
 {
-	WSADATA wsaData;
-	int result;
-	int error;	
 	qs_context* server;
 	unsigned int i;
 	io_context *io_context;
@@ -267,33 +296,6 @@ MYDLL_API unsigned int   qs_start( void *qs_instance, qs_params * params )
 	if(server->status == runned) return ERROR_ALREADY_EXISTS;
 
 	memcpy(&server->qs_params, params, sizeof(qs_params));
-
-	result = WSAStartup(MAKEWORD(2,2), &wsaData);
-	if (result != 0) 
-	{
-		cry("%s: WSAStartup() fail with error: %d",
-			__func__, GetLastError());
-		return GetLastError();
-	}
-
-	//server->connections = connection_list_new();
-
-	server->iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
-	if(!server->iocp) 
-	{	
-		error = GetLastError();
-		WSACleanup();
-		cry("%s: CreateIoCompletionPort() fail with error: %d",	__func__, error);
-		return error;
-	}
-
-	if(!init_ex_funcs(server)) 
-	{		
-		error = WSAGetLastError();
-		WSACleanup();
-		cry("%s: init_ex_funcs() fail with error: %d",	__func__, error);
-		return error;
-	}
 
 	if (!parse_port_string(params->listener.listen_adr, &so))
 	{
@@ -333,11 +335,13 @@ MYDLL_API unsigned int   qs_start( void *qs_instance, qs_params * params )
 		memcpy(&server->qs_socket, &so, sizeof(so));
 		CreateIoCompletionPort((HANDLE)server->qs_socket.sock, server->iocp, server->qs_socket.sock, 0);
 
-		server->qs_info.opened_sockets_count = 0;
+		server->qs_info.sockets_count = 0;
+
+		server->threads = (uintptr_t *)malloc(sizeof(uintptr_t) * server->qs_params.worker_threads_count);
 
 		for(i = 0; i<server->qs_params.worker_threads_count; ++i)
 		{
-			create_thread(working_thread, server, 256);
+			server->threads[i] = create_thread(working_thread, server, THREAD_STACK_SIZE);
 		}
 		//	create_thread(cleaner_thread, server, 512);
 
@@ -352,12 +356,37 @@ MYDLL_API unsigned int   qs_start( void *qs_instance, qs_params * params )
 	return GetLastError();
 }
 
-MYDLL_API unsigned int   qs_stop( void *qs_instance )
+
+MYDLL_API unsigned int qs_stop( void *qs_instance )
 {
+	qs_context* server = (qs_context*)qs_instance;
+	u_int i;
+
+	for(i = 0; i<server->qs_params.worker_threads_count; i++)
+	{
+		io_context *io_context = memory_manager_alloc(server->mem_manager);
+		io_context->ended_operation = stop_server;
+		PostQueuedCompletionStatus(server->iocp, 8, 0, (LPOVERLAPPED)io_context);
+	}
+
+	WaitForMultipleObjects(server->qs_params.worker_threads_count, (HANDLE *)server->threads, TRUE, INFINITE);
+	for(i = 0; i<server->qs_params.worker_threads_count; i++)
+	{
+		CloseHandle((HANDLE)server->threads[i]);
+	}
+
+	socket_close(server->qs_socket.sock, &server->qs_info);
+	CloseHandle(server->iocp);
+	memory_manager_destroy(server->mem_manager);
+	free(server->threads);
+	server->qs_info.sockets_count = 0;
+	server->qs_info.active_connections_count = 0;
+	server->status = not_runned;
+	
 	return ERROR_SUCCESS;
 }
 
-MYDLL_API unsigned int   qs_send(connection *connection, BYTE *buffer, unsigned long len)
+MYDLL_API unsigned int qs_send(connection *connection, BYTE *buffer, unsigned long len)
 {
 	io_context *context;
 	int  res;
@@ -376,7 +405,7 @@ MYDLL_API unsigned int   qs_send(connection *connection, BYTE *buffer, unsigned 
 	return ERROR_SUCCESS;
 }
 
-MYDLL_API unsigned int   qs_send_file( void *qs_instance, connection *connection, HANDLE file)
+MYDLL_API unsigned int qs_send_file( void *qs_instance, connection *connection, HANDLE file)
 {
 	qs_context* server;	
 	io_context *context;
@@ -388,7 +417,7 @@ MYDLL_API unsigned int   qs_send_file( void *qs_instance, connection *connection
 	return ERROR_SUCCESS;
 }
 
-MYDLL_API unsigned int   qs_recv(connection *connection, BYTE *buffer, unsigned long len)
+MYDLL_API unsigned int qs_recv(connection *connection, BYTE *buffer, unsigned long len)
 {
 	io_context *context;
 	int res;
@@ -408,7 +437,7 @@ MYDLL_API unsigned int   qs_recv(connection *connection, BYTE *buffer, unsigned 
 	return ERROR_SUCCESS;
 }
 
-MYDLL_API unsigned int   qs_close_connection( void *qs_instance, connection *connection )
+MYDLL_API unsigned int qs_close_connection( void *qs_instance, connection *connection )
 {
 	qs_context* server;	
 	io_context *context;
@@ -420,7 +449,7 @@ MYDLL_API unsigned int   qs_close_connection( void *qs_instance, connection *con
 	return ERROR_SUCCESS;
 }
 
-MYDLL_API unsigned int   qs_post_message_to_pool(void *qs_instance, void *message, connection *connection)
+MYDLL_API unsigned int qs_post_message_to_pool(void *qs_instance, void *message, connection *connection)
 {
 	qs_context* server;	
 	io_context *context;
@@ -432,7 +461,7 @@ MYDLL_API unsigned int   qs_post_message_to_pool(void *qs_instance, void *messag
 	return ERROR_SUCCESS;
 }
 
-MYDLL_API unsigned int   qs_query_qs_information( void *qs_instance, qs_info *qs_information )
+MYDLL_API unsigned int qs_query_qs_information( void *qs_instance, qs_info *qs_information )
 {
 	qs_context *server;
 	if(!qs_instance || !qs_information) return ERROR_INVALID_PARAMETER;
@@ -441,7 +470,7 @@ MYDLL_API unsigned int   qs_query_qs_information( void *qs_instance, qs_info *qs
 	return ERROR_SUCCESS;
 }
 
-MYDLL_API void			 sockaddr_to_string(char *buf, size_t len, const union usa *usa) 
+MYDLL_API void sockaddr_to_string(char *buf, size_t len, const union usa *usa) 
 {
 	buf[0] = '\0';
 #if defined(USE_IPV6)
@@ -529,9 +558,11 @@ unsigned __stdcall working_thread(void *s)
 		if(!bytes_transferred && io_context->ended_operation != on_connect)
 		{
 			//connection_list_remove(server->connections, &io_context->connection.connection);
+			InterlockedDecrement(&server->qs_info.active_connections_count);
 			(*server->qs_params.callbacks.on_disconnect)(&io_context->connection);
 			socket_close(io_context->connection.client.sock, &server->qs_info);
 			memory_manager_free(server->mem_manager, io_context);
+
 			for(; accepts < max_accepts; ++accepts)
 			{
 				init_accept(server, buf);		
@@ -543,7 +574,7 @@ unsigned __stdcall working_thread(void *s)
 		{	
 			accepts--;
 			//connection_list_add(server->connections, &io_context->connection.connection);
-			//InterlockedIncrement(&server->qs_info.connections_count);			
+			InterlockedIncrement(&server->qs_info.active_connections_count);			
 			setsockopt(io_context->connection.client.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
 				(char *)&server->qs_socket, sizeof(server->qs_socket) );
 			set_keep_alive(&io_context->connection, server->qs_params.keep_alive_time, server->qs_params.keep_alive_interval);
@@ -589,18 +620,19 @@ unsigned __stdcall working_thread(void *s)
 		case(start_clean):
 			//clear_inactive_connections(server, 20);
 			continue;
+		case(stop_server):
+			memory_manager_free(server->mem_manager, io_context);
+			goto exit;
 		}
 
 	}
+	exit:
 
 	return 0;
 }
 
 
-BOOL APIENTRY DllMain( HMODULE hModule,
-					  DWORD  ul_reason_for_call,
-					  LPVOID lpReserved
-					  )
+BOOL APIENTRY DllMain( HMODULE hModule, DWORD  ul_reason_for_call, LPVOID lpReserved )
 {
 	switch (ul_reason_for_call)
 	{
