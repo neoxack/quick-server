@@ -34,7 +34,7 @@ static BOOL CALLBACK  on_recv( connection *connection)
 		"<title>Test HTML5 site</title>"
 		"</head>"
 		"<body>"
-		"AAAAAAAAAAAAAAAAAAAARrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+		"<center><h1>Server is work</h1></center>"
 		"</body>"
 		"</html>";
 

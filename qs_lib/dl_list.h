@@ -46,15 +46,15 @@ void push_back(list* llist, void* data);
 int remove_front(list* llist, list_op free_func);
 int remove_index(list* llist, size_t index, list_op free_func);
 int remove_back(list* llist, list_op free_func);
-int remove_data(list* llist, const void* data, equal_op compare_func);
-int remove_if(list* llist, list_pred pred_func, list_op free_func);
+size_t remove_data(list* llist, const void* data, equal_op compare_func);
+size_t remove_if(list* llist, list_pred pred_func, list_op free_func);
 
 /* Querying List */
 void* front(list* llist);
 void* back(list* llist);
 void* get_index(list* llist, size_t index);
 int is_empty(list* llist);
-int size(list* llist);
+size_t size(list* llist);
 
 /* Searching */
 int find_occurrence(list* llist, const void* search, equal_op compare_func);

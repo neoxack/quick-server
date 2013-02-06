@@ -258,9 +258,9 @@ int remove_back(list* llist, list_op free_func)
   * @param free_func a pointer to a function that is responsible for freeing the node's data
   * @return the number of nodes that were removed.
   */
-int remove_data(list* llist, const void* data, equal_op compare_func)
+size_t remove_data(list* llist, const void* data, equal_op compare_func)
 {
-  int removed = 0;
+  size_t removed = 0;
 
   if (!llist->size) return removed;
 
@@ -319,11 +319,11 @@ int remove_data(list* llist, const void* data, equal_op compare_func)
   * @param free_func a pointer to a function that is responsible for freeing the node's data
   * @return the number of nodes that were removed.
   */
-int remove_if(list* llist, list_pred pred_func, list_op free_func)
+size_t remove_if(list* llist, list_pred pred_func, list_op free_func)
 {
   if (!llist->size) return 0;
 
-  int removed = 0;
+  size_t removed = 0;
   node *current = llist->head;
   node *next = current->next;
   node *prev = current->prev;
@@ -454,7 +454,7 @@ int is_empty(list* llist)
   * @param llist a pointer to the list
   * @return The size of the linked list
   */
-int size(list* llist)
+size_t size(list* llist)
 {
   return llist->size;
 }
