@@ -28,12 +28,19 @@
 #define __func__ __FUNCTION__
 #endif
 
+#include "dl_list.h"
 #include "fast_buffer.h"
 
 typedef struct _memory_manager {
 	fast_buf *context_buf;
 	fast_buf *buffer;
 } memory_manager;
+
+typedef struct _connection_storage {
+	list *list;
+	allocator allocator;
+	CRITICAL_SECTION cs;
+} connection_storage;
 
 typedef enum _states {
 	send_done,
@@ -67,6 +74,7 @@ typedef struct _qs_context {
 	qs_info qs_info;
 	HANDLE iocp;
 	uintptr_t *threads;
+	connection_storage * storage;
 	struct socket qs_socket;
 	memory_manager *mem_manager;
 	qs_params qs_params;
@@ -79,6 +87,64 @@ typedef struct _qs_context {
 	} ex_funcs;
 
 } qs_context;
+
+
+void *my_alloc(void *object, size_t size)
+{
+	return fast_buf_alloc((fast_buf*)object);
+}
+
+void my_free(void *object, void *p)
+{
+	fast_buf_free((fast_buf*)object, p);
+}
+
+static connection_storage * connection_storage_new(size_t max_count)
+{
+	connection_storage * storage = (connection_storage *)calloc(1, sizeof connection_storage);
+	allocator allocator;
+	allocator.object = fast_buf_create(sizeof(connection*), max_count);
+	allocator.alloc = my_alloc;
+	allocator.free = my_free;
+
+	storage->list = create_list(allocator);
+	InitializeCriticalSectionAndSpinCount(&storage->cs, 0x400);
+	return storage;
+}
+
+static void connection_storage_add(connection_storage * storage, connection * con)
+{
+	EnterCriticalSection(&storage->cs);
+	push_front(storage->list, con);
+	LeaveCriticalSection(&storage->cs);
+}
+
+//static void connection_storage_traverse_delete(connection_storage * storage, BOOL (*criterion) (connection *))
+//{
+//	EnterCriticalSection(&storage->cs);
+//	linked_list_traverse_delete(storage->list, (int (*)(void*))criterion);
+//	LeaveCriticalSection(&storage->cs);
+//}
+
+int eq(const void* a, const void* b)
+{
+	return a == b;
+}
+
+static void connection_storage_delete(connection_storage * storage, connection * connection)
+{
+	EnterCriticalSection(&storage->cs);
+	remove_data(storage->list, connection, eq);
+	LeaveCriticalSection(&storage->cs);
+}
+
+static void connection_storage_free(connection_storage * storage)
+{
+	DeleteCriticalSection(&storage->cs);
+	empty_list(storage->list);
+	fast_buf_destroy((fast_buf *)storage->allocator.object);
+	free(storage);
+}
 
 
 // Print error message
@@ -229,8 +295,6 @@ MYDLL_API unsigned long qs_create(void **qs_instance )
 			return error;
 		}
 
-		//server->connections = connection_list_new();
-
 		server->iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, 0, 0);
 		if(!server->iocp) 
 		{	
@@ -342,6 +406,8 @@ MYDLL_API unsigned int qs_start( void *qs_instance, qs_params * params )
 		return ERROR_ALLOCATE_BUCKET;
 	}
 
+	server->storage = connection_storage_new(server->qs_params.expected_connections_amount);
+
 	memcpy(&server->qs_socket, &so, sizeof(so));
 	CreateIoCompletionPort((HANDLE)server->qs_socket.sock, server->iocp, server->qs_socket.sock, 0);
 
@@ -385,6 +451,7 @@ MYDLL_API unsigned int qs_stop( void *qs_instance )
 
 	socket_close(server->qs_socket.sock, &server->qs_info);
 	CloseHandle(server->iocp);
+	connection_storage_free(server->storage);
 	memory_manager_destroy(server->mem_manager);
 	free(server->threads);
 	server->qs_info.sockets_count = 0;
@@ -561,8 +628,7 @@ unsigned __stdcall working_thread(void *s)
 
 		if(!bytes_transferred && io_context->ended_operation != on_connect)
 		{
-			//connection_list_remove(server->connections, &io_context->connection.connection);
-			InterlockedDecrement(&server->qs_info.active_connections_count);
+			connection_storage_delete(server->storage, &io_context->connection);
 			(*server->qs_params.callbacks.on_disconnect)(&io_context->connection);
 			socket_close(io_context->connection.client.sock, &server->qs_info);
 			memory_manager_free(server->mem_manager, io_context);
@@ -577,8 +643,7 @@ unsigned __stdcall working_thread(void *s)
 		if(io_context->ended_operation == on_connect) 
 		{	
 			accepts--;
-			//connection_list_add(server->connections, &io_context->connection.connection);
-			InterlockedIncrement(&server->qs_info.active_connections_count);			
+			connection_storage_add(server->storage, &io_context->connection);		
 			setsockopt(io_context->connection.client.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
 				(char *)&server->qs_socket, sizeof(server->qs_socket) );
 			set_keep_alive(&io_context->connection, server->qs_params.keep_alive_time, server->qs_params.keep_alive_interval);

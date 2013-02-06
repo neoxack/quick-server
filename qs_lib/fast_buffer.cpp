@@ -4,7 +4,7 @@
 #include <windows.h>
 
 #define BYTE unsigned char
-#define SPIN_COUNT 4000
+#define SPIN_COUNT 1024
 
 fast_buf* fast_buf_create(size_t size_of_element, size_t count_of_elements)
 {
@@ -47,12 +47,10 @@ void* fast_buf_alloc(fast_buf *buf)
 
 	if(!buf)
 		return NULL;
+	EnterCriticalSection(&buf->cs);
 	if(!(buf->head + buf->size_of_element))
 		return NULL; /* out of memory */
-
-	EnterCriticalSection(&buf->cs);
 	currPtr = buf->head;
-
 	buf->head = *((BYTE**)(currPtr + buf->size_of_element));
 	LeaveCriticalSection(&buf->cs);
 	return currPtr;
