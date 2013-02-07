@@ -20,7 +20,7 @@ typedef struct llist
 } list;
 
 /* A function pointer type that points to a function that takes in a void* and returns nothing call it list_op */
-typedef void (*list_op)(void*);
+typedef void (*list_op)(void*, void*);
 /* A function pointer type that points to a function that takes in a const void* and returns an int call it list_pred */
 typedef int (*list_pred)(const void*);
 /* A function pointer type that points to a function that takes in 2 const void*'s and returns an int call it equal_op 
@@ -43,11 +43,11 @@ void push_front(list* llist, void* data);
 void push_back(list* llist, void* data);
 
 /* Removing */
-int remove_front(list* llist, list_op free_func);
-int remove_index(list* llist, size_t index, list_op free_func);
+int remove_front(list* llist);
+int remove_index(list* llist, size_t index);
 int remove_back(list* llist, list_op free_func);
 size_t remove_data(list* llist, const void* data, equal_op compare_func);
-size_t remove_if(list* llist, list_pred pred_func, list_op free_func);
+size_t remove_if(list* llist, list_pred pred_func);
 
 /* Querying List */
 void* front(list* llist);
@@ -63,7 +63,7 @@ int find_occurrence(list* llist, const void* search, equal_op compare_func);
 void empty_list(list* llist);
 
 /* Traversal */
-void traverse(list* llist, list_op do_func);
+void traverse(list* llist, list_op do_func, void *user_data);
 
 /* Debugging Support */
 #ifdef DEBUG

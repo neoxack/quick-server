@@ -34,7 +34,7 @@ struct socket {
 struct _connection {
 	struct socket client;
 	BYTE  *buffer;
-	unsigned long bytes_transferred;
+	u_long bytes_transferred;
 	void *user_data;
 };
 
@@ -48,17 +48,18 @@ typedef BOOL (CALLBACK *ON_SEND_PROC)( connection *connection);
 typedef BOOL (CALLBACK *ON_SENDFILE_PROC)( connection *connection);
 typedef void (CALLBACK *ON_ERROR_PROC)( wchar_t *str_error);
 typedef void (CALLBACK *USERMESSAGE_HANDLER_PROC)(connection *connection, void *message);
+typedef void ( *ENUM_CONNECTIONS_PROC)(void *connection, void *param);
 
 typedef struct _qs_params {
 	struct _listener {
 		char *listen_adr;
-		unsigned long init_accepts_count;
+		u_long init_accepts_count;
 	} listener;
 
 	unsigned int worker_threads_count;
-	unsigned long connection_buffer_size;
-	unsigned long keep_alive_time;
-	unsigned long keep_alive_interval;
+	u_long connection_buffer_size;
+	u_long keep_alive_time;
+	u_long keep_alive_interval;
 	unsigned int connections_idle_timeout;
 	size_t expected_connections_amount;
 
@@ -79,14 +80,15 @@ typedef struct _qs_info {
 } qs_info;
 
 // Server functions.
-MYDLL_API unsigned long  qs_create(void **qs_instance );
+MYDLL_API u_long  qs_create(void **qs_instance );
 MYDLL_API void		     qs_delete(void *qs_instance );
 MYDLL_API unsigned int   qs_start( void *qs_instance, qs_params * params );
 MYDLL_API unsigned int   qs_stop( void *qs_instance );
-MYDLL_API unsigned int   qs_send(connection *connection, BYTE *buffer, unsigned long len);
+MYDLL_API unsigned int   qs_send(connection *connection, BYTE *buffer, u_long len);
 MYDLL_API unsigned int   qs_send_file( void *qs_instance, connection *connection, HANDLE file);
-MYDLL_API unsigned int   qs_recv(connection *connection, BYTE *buffer, unsigned long len);
+MYDLL_API unsigned int   qs_recv(connection *connection, BYTE *buffer, u_long len);
 MYDLL_API unsigned int   qs_close_connection( void *qs_instance, connection *connection );
 MYDLL_API unsigned int   qs_post_message_to_pool(void *qs_instance, void *message, connection *connection);
 MYDLL_API unsigned int   qs_query_qs_information( void *qs_instance, qs_info *qs_information );
+MYDLL_API unsigned int   qs_enum_connections( void *qs_instance, ENUM_CONNECTIONS_PROC enum_connections_proc, void *param);
 MYDLL_API void			 sockaddr_to_string(char *buf, size_t len, const union usa *usa) ;

@@ -3,8 +3,8 @@
 
 typedef struct _allocator {
 	void * object;
-	void *(*alloc)(void *object, size_t size);
-	void (*free)(void *object, void *p);
+	void *(*alloc)(size_t size);
+	void (*free)(void *p);
 } allocator;
 
 #endif

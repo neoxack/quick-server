@@ -38,8 +38,9 @@ static BOOL CALLBACK  on_recv( connection *connection)
 		"</body>"
 		"</html>";
 
-	char *response = "HTTP/1.0 200 OK\r\n"
+	char *response = "HTTP/1.1 200 OK\r\n"
 		"Content-Type: text/html; charset=utf-8\r\n"
+		//"Connection: close\r\n"
 		"Content-Length: %d\r\n\r\n";
 
 	sprintf((char *)connection->buffer, response, (u_int)strlen(html));
@@ -66,17 +67,25 @@ static void CALLBACK on_error( wchar_t *error)
 	wprintf(L"%s", error);
 }
 
+static void  enum_proc(void *con, void *param)
+{
+	char buf[128];
+	connection *conn = (connection *)con;
+	sockaddr_to_string(buf, 128, &conn->client.rsa); 
+	printf("enum %s\n", buf);
+}
+
 int _tmain()
 {
 	u_int res;
 	qs_params params = {0};
 	
-
-	params.worker_threads_count = 6;
+	params.worker_threads_count = 8;
 	params.expected_connections_amount = COUNT;
 	params.connection_buffer_size = BUF_SIZE;
 	params.keep_alive_time = 5000;
 	params.keep_alive_interval = 500;
+	params.connections_idle_timeout = 10000;
 	params.listener.listen_adr = "80";
 	params.listener.init_accepts_count = 200;
 
@@ -91,6 +100,8 @@ int _tmain()
 	if(res == 0)
 	{
 		printf("%s", "Server started\n");
+		system("pause");
+		qs_enum_connections(server, enum_proc, 0);
 		system("pause");
 		qs_stop(server);
 		printf("%s", "Server stopped\n");

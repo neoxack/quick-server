@@ -35,6 +35,7 @@ static node* create_node(list* llist, void* data);
 list* create_list(allocator alloc)
 {
   list *l = (list *)malloc(sizeof(list));
+  if(!l) return NULL;
   l->head = NULL;
   l->size = 0;
   l->allocator = alloc;
@@ -51,7 +52,7 @@ list* create_list(allocator alloc)
   */
 static node* create_node(list* llist, void* data)
 {
-  node *n = (node *)llist->allocator.alloc(llist->allocator.object, sizeof(node));
+  node *n = (node *)llist->allocator.alloc(sizeof(node));
   n->data = data;
   n->prev = NULL;
   n->next = NULL;
@@ -136,7 +137,7 @@ void push_back(list* llist, void* data)
   * @param free_func pointer to a function that is responsible for freeing the node's data.
   * @return -1 if the remove failed (which is only there are no elements) 0 if the remove succeeded.
   */
-int remove_front(list* llist, list_op free_func)
+int remove_front(list* llist)
 {
   if (!llist->size) return -1;
 
@@ -158,8 +159,8 @@ int remove_front(list* llist, list_op free_func)
   }
 
   // free the data and the node
-  free_func(head->data);
-  llist->allocator.free(llist->allocator.object, head);
+ // free_func(head->data);
+  llist->allocator.free(head);
 
   llist->size--;
   
@@ -177,7 +178,7 @@ int remove_front(list* llist, list_op free_func)
   * @param free_func pointer to a function that is responsible for freeing the node's data.
   * @return -1 if the remove failed 0 if the remove succeeded.
   */
-int remove_index(list* llist, size_t index, list_op free_func)
+int remove_index(list* llist, size_t index)
 {
   if (!llist->size) return -1;
 
@@ -202,8 +203,8 @@ int remove_index(list* llist, size_t index, list_op free_func)
   }
   
   // Free the data and node
-  free_func(current->data);
-  llist->allocator.free(llist->allocator.object, current);
+ // free_func(current->data);
+  llist->allocator.free(current);
   
   llist->size--;
 
@@ -220,7 +221,7 @@ int remove_index(list* llist, size_t index, list_op free_func)
   * @param free_func pointer to a function that is responsible for freeing the node's data.
   * @return -1 if the remove failed 0 if the remove succeeded.
   */
-int remove_back(list* llist, list_op free_func)
+int remove_back(list* llist)
 {
   if (!llist->size) return -1;
 
@@ -239,8 +240,8 @@ int remove_back(list* llist, list_op free_func)
   }
 
   // free the data and node
-  free_func(tbr->data);
-  llist->allocator.free(llist->allocator.object, tbr);
+ // free_func(tbr->data);
+  llist->allocator.free(tbr);
   
   llist->size--;
 
@@ -280,7 +281,7 @@ size_t remove_data(list* llist, const void* data, equal_op compare_func)
 
       // free the data and node
     //  free_func(current->data);
-      llist->allocator.free(llist->allocator.object, current);
+      llist->allocator.free(current);
 
       // the current is the next node
       current = next;
@@ -319,7 +320,7 @@ size_t remove_data(list* llist, const void* data, equal_op compare_func)
   * @param free_func a pointer to a function that is responsible for freeing the node's data
   * @return the number of nodes that were removed.
   */
-size_t remove_if(list* llist, list_pred pred_func, list_op free_func)
+size_t remove_if(list* llist, list_pred pred_func)
 {
   if (!llist->size) return 0;
 
@@ -339,8 +340,8 @@ size_t remove_if(list* llist, list_pred pred_func, list_op free_func)
       prev->next = next;
 
       // free the data and node
-      free_func(current->data);
-      llist->allocator.free(llist->allocator.object, current);
+   //   free_func(current->data);
+      llist->allocator.free(current);
 
       // update the current
       current = next;
@@ -501,7 +502,7 @@ void empty_list(list* llist)
   // loop through the list and free all the nodes
   for (size_t i=0; i<llist->size; i++) {
   //  free_func(current->data);
-    llist->allocator.free(llist->allocator.object, current);
+    llist->allocator.free(current);
     current = next;
     
     // if it's not the end of the list set the next node
@@ -521,11 +522,11 @@ void empty_list(list* llist)
   * @param llist a pointer to a linked list.
   * @param do_func a function that does something to each node's data.
   */
-void traverse(list* llist, list_op do_func)
+void traverse(list* llist, list_op do_func, void *user_data)
 {
   node *current = llist->head;
   for (size_t i=0; i<llist->size; i++) {
-    do_func(current->data);
+    do_func(current->data, user_data);
     current = current->next;
   }
 }
