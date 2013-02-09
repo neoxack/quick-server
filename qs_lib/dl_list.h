@@ -47,6 +47,7 @@ int remove_front(list* llist);
 int remove_index(list* llist, size_t index);
 int remove_back(list* llist, list_op free_func);
 size_t remove_data(list* llist, const void* data, equal_op compare_func);
+size_t remove_data_once(list* llist, const void* data, equal_op compare_func);
 size_t remove_if(list* llist, list_pred pred_func);
 
 /* Querying List */

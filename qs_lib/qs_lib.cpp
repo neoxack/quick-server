@@ -132,7 +132,7 @@ int eq(const void* a, const void* b)
 static void connection_storage_delete(connection_storage * storage, connection * connection)
 {
 	EnterCriticalSection(&storage->cs);
-	remove_data(storage->list, connection, eq);
+	remove_data_once(storage->list, connection, eq);
 	LeaveCriticalSection(&storage->cs);
 }
 
@@ -186,11 +186,11 @@ static uintptr_t create_thread(unsigned (__stdcall * start_addr) (void *), void 
 	return thread;
 }
 
-static io_context *alloc_context(qs_context *server, u_long buffer_size)
+static io_context *alloc_context(qs_context *server)
 {
 	io_context *io_cont = (io_context *)nedpmalloc(server->pool, sizeof(io_context));
 	memset(io_cont, 0, sizeof(io_context));
-	io_cont->connection.buffer = (BYTE *)nedpmalloc(server->pool, (size_t)buffer_size);
+	io_cont->connection.buffer = (BYTE *)nedpmalloc(server->pool, (size_t)server->qs_params.connection_buffer_size);
 	return io_cont;
 }
 
@@ -232,14 +232,13 @@ static BOOL init_ex_funcs(qs_context* server)
 	GUID disconnect_ex_GUID =    WSAID_DISCONNECTEX;
 	GUID transmitfile_GUID =     WSAID_TRANSMITFILE;
 	u_long dwTmp;
-	int res;
+	int res = TRUE;
 
 	if ( ( WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &accept_ex_GUID, sizeof(accept_ex_GUID), &server->ex_funcs.AcceptEx, sizeof(server->ex_funcs.AcceptEx), &dwTmp, NULL, NULL)!=0) 
 		||(WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &transmit_packets_GUID, sizeof(transmit_packets_GUID), &server->ex_funcs.TransmitPackets, sizeof(server->ex_funcs.TransmitPackets), &dwTmp, NULL, NULL)!=0) 
 		||(WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &disconnect_ex_GUID, sizeof(disconnect_ex_GUID), &server->ex_funcs.DisconnectEx, sizeof(server->ex_funcs.DisconnectEx), &dwTmp, NULL, NULL)!=0)
 		||(WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &transmitfile_GUID, sizeof(transmitfile_GUID), &server->ex_funcs.TransmitFile, sizeof(server->ex_funcs.TransmitFile), &dwTmp, NULL, NULL)!=0)) 
 		res = FALSE;
-	res = TRUE;
 	closesocket(s);
 	return res;
 }
@@ -383,13 +382,13 @@ MYDLL_API unsigned int qs_start( void *qs_instance, qs_params * params )
 		server->threads[i] = create_thread(working_thread, server, THREAD_STACK_SIZE);
 	}
 
-	io_context = alloc_context(server, server->qs_params.connection_buffer_size);
+	io_context = alloc_context(server);
 	io_context->ended_operation = start_server;
 
 	u_long idle_check_period = server->qs_params.connections_idle_timeout;
 	if(idle_check_period)
 	{
-		CreateTimerQueueTimer(&server->timer, NULL, (WAITORTIMERCALLBACK)clean_timer_callback, server,  idle_check_period,  idle_check_period, NULL);
+		CreateTimerQueueTimer(&server->timer, NULL, (WAITORTIMERCALLBACK)clean_timer_callback, server,  idle_check_period,  idle_check_period/2, NULL);
 	}
 
 	PostQueuedCompletionStatus(server->iocp, 8, 0, (LPOVERLAPPED)io_context);
@@ -427,7 +426,7 @@ MYDLL_API unsigned int qs_stop( void *qs_instance )
 	DeleteTimerQueueTimer(NULL, server->timer, NULL);
 	for(i = 0; i<(size_t)server->qs_params.worker_threads_count; i++)
 	{
-		io_context *io_context = alloc_context(server, server->qs_params.connection_buffer_size);
+		io_context *io_context = alloc_context(server);
 		io_context->ended_operation = stop_server;
 		PostQueuedCompletionStatus(server->iocp, 8, 0, (LPOVERLAPPED)io_context);
 	}
@@ -441,9 +440,9 @@ MYDLL_API unsigned int qs_stop( void *qs_instance )
 	socket_close(server->qs_socket.sock, &server->qs_info);
 	CloseHandle(server->iocp);
 	connection_storage_free(server->storage);
-	neddestroypool(server->pool);
-	
 	free(server->threads);
+	neddestroypool(server->pool);
+	neddisablethreadcache(0);
 	server->qs_info.sockets_count = 0;
 	server->qs_info.active_connections_count = 0;
 	server->status = not_runned;
@@ -511,7 +510,7 @@ MYDLL_API unsigned int qs_close_connection( void *qs_instance, connection *conne
 	context = get_context(connection);
 	context->ended_operation = on_disconnect;
 	//PostQueuedCompletionStatus(server->iocp, 0, (uintptr_t)0, (LPOVERLAPPED)context);
-	server->ex_funcs.DisconnectEx(connection->client.sock, (LPOVERLAPPED)context, TF_DISCONNECT, 0);
+	server->ex_funcs.DisconnectEx(connection->client.sock, (LPOVERLAPPED)context, 0, 0);
 	return ERROR_SUCCESS;
 }
 
@@ -552,14 +551,13 @@ MYDLL_API void sockaddr_to_string(char *buf, size_t len, const union usa *usa)
 	inet_ntop(usa->sa.sa_family, usa->sa.sa_family == AF_INET ?
 		(void *) &usa->sin.sin_addr :
 	(void *) &usa->sin6.sin6_addr, buf, len);
-//#elif defined(_WIN32)
-//	// Only Windoze Vista (and newer) have inet_ntop()
-//	strncpy(buf, inet_ntoa(usa->sin.sin_addr), len);
-//#else
-//	inet_ntop(usa->sa.sa_family, (void *) &usa->sin.sin_addr, buf, len);
+#elif defined(_WIN32)
+	// Only Windoze Vista (and newer) have inet_ntop()
+	strncpy(buf, inet_ntoa(usa->sin.sin_addr), len);
+#else
+	inet_ntop(usa->sa.sa_family, (void *) &usa->sin.sin_addr, buf, len);
 #endif
 
-	inet_ntop(usa->sa.sa_family, (void *) &usa->sin.sin_addr, buf, len);
 }
 
 static void init_accept(qs_context *server, BYTE *out_buf)
@@ -567,7 +565,7 @@ static void init_accept(qs_context *server, BYTE *out_buf)
 	SOCKET client;
 	io_context *new_context;
 	u_long bytes_transferred;
-	new_context = alloc_context(server, server->qs_params.connection_buffer_size);
+	new_context = alloc_context(server);
 	if(new_context != NULL)
 	{
 		client = socket_create(&server->qs_info);

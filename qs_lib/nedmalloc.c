@@ -2242,7 +2242,7 @@ NEDMALLOCNOALIASATTR NEDMALLOCPTRATTR void **nedpindependent_comalloc(nedpool *p
 	void **ret;
 	threadcache *tc;
 	int mymspace;
-	size_t i, *adjustedsizes=(size_t *) alloca(elems*sizeof(size_t));
+	size_t i, *adjustedsizes=(size_t *) _malloca(elems*sizeof(size_t));
 	if(!adjustedsizes) return 0;
 	for(i=0; i<elems; i++)
 		adjustedsizes[i]=sizes[i]<sizeof(threadcacheblk) ? sizeof(threadcacheblk) : sizes[i];

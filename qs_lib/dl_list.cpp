@@ -311,6 +311,58 @@ size_t remove_data(list* llist, const void* data, equal_op compare_func)
   return removed;
 }
 
+size_t remove_data_once(list* llist, const void* data, equal_op compare_func)
+{
+	size_t removed = 0;
+
+	if (!llist->size) return removed;
+
+	node *current = llist->head;
+	node *next = current->next;
+	node *prev = current->prev;
+	int is_head = 1;
+
+	for (size_t i=0; i<llist->size && removed < 1; i++) {
+		if (compare_func(data, current->data)) {
+			// if we are still on the head update the current head
+			if (is_head) llist->head = next;
+
+			// update the pointers
+			next->prev = prev;
+			prev->next = next;
+
+			// free the data and node
+			//  free_func(current->data);
+			llist->allocator.free(current);
+
+			// the current is the next node
+			current = next;
+
+			removed++;
+		} else {
+			// no longer on the head
+			is_head = 0;
+
+			// move to the next node
+			current = current->next;
+		}
+
+		// update the previous and next node
+		if (llist->size > 1) {
+			next = current->next;
+			prev = current->prev;
+		}
+	}
+
+	// update the size
+	llist->size-=removed;
+
+	// if the size is zero the list is empty and the head should be null
+	if (!llist->size) llist->head = NULL;
+
+	return removed;
+}
+
 /** remove_if
   *
   * Removes all nodes whose data when passed into the predicate function returns true

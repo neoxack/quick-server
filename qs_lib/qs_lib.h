@@ -41,13 +41,13 @@ struct _connection {
 typedef struct _connection connection;
 
 // Callback functions.
-typedef BOOL (CALLBACK *ON_CONNECT_PROC)( connection *connection );
-typedef void (CALLBACK *ON_DISCONNECT_PROC)( connection *connection );
-typedef BOOL (CALLBACK *ON_RECV_PROC)( connection *connection);
-typedef BOOL (CALLBACK *ON_SEND_PROC)( connection *connection);
-typedef BOOL (CALLBACK *ON_SENDFILE_PROC)( connection *connection);
-typedef void (CALLBACK *ON_ERROR_PROC)( wchar_t *str_error);
-typedef void (CALLBACK *USERMESSAGE_HANDLER_PROC)(connection *connection, void *message);
+typedef BOOL (*ON_CONNECT_PROC)( connection *connection );
+typedef void (*ON_DISCONNECT_PROC)( connection *connection );
+typedef BOOL (*ON_RECV_PROC)( connection *connection);
+typedef BOOL (*ON_SEND_PROC)( connection *connection);
+typedef BOOL (*ON_SENDFILE_PROC)( connection *connection);
+typedef void (*ON_ERROR_PROC)( wchar_t *str_error);
+typedef void (*USERMESSAGE_HANDLER_PROC)(connection *connection, void *message);
 typedef void ( *ENUM_CONNECTIONS_PROC)(void *connection, void *param);
 
 typedef struct _qs_params {

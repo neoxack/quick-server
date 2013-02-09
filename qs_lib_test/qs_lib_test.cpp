@@ -6,7 +6,7 @@
 
 static void *server;
 
-static BOOL CALLBACK on_connect1( connection *connection )
+static BOOL on_connect1( connection *connection )
 {
 	char buf1[64];
 	sockaddr_to_string(buf1, 64, &connection->client.rsa); 
@@ -18,14 +18,14 @@ static BOOL CALLBACK on_connect1( connection *connection )
 	return 1;
 }
 
-static void CALLBACK  on_disconnect1( connection *connection )
+static void on_disconnect1( connection *connection )
 {
 	char buf[128];
 	sockaddr_to_string(buf, 128, &connection->client.rsa); 
 	printf("%s disconnect\n", buf);
 }
 
-static BOOL CALLBACK  on_recv( connection *connection)
+static BOOL on_recv( connection *connection)
 {
 	char *html = "<!DOCTYPE html>\n"
 		"<html>"
@@ -40,7 +40,7 @@ static BOOL CALLBACK  on_recv( connection *connection)
 
 	char *response = "HTTP/1.1 200 OK\r\n"
 		"Content-Type: text/html; charset=utf-8\r\n"
-		//"Connection: close\r\n"
+	//	"Connection: close\r\n"
 		"Content-Length: %d\r\n\r\n";
 
 	sprintf((char *)connection->buffer, response, (u_int)strlen(html));
@@ -53,7 +53,7 @@ static BOOL CALLBACK  on_recv( connection *connection)
 	return 1;
 }
 
-static BOOL CALLBACK on_send( connection *connection)
+static BOOL on_send( connection *connection)
 {
 	if(qs_recv(connection, connection->buffer, BUF_SIZE)!=0)
 	{
@@ -62,16 +62,16 @@ static BOOL CALLBACK on_send( connection *connection)
 	return 1;
 }
 
-static void CALLBACK on_error( wchar_t *error)
+static void on_error( wchar_t *error)
 {
 	wprintf(L"%s", error);
 }
 
 static void  enum_proc(void *con, void *param)
 {
-	char buf[128];
+	char buf[64];
 	connection *conn = (connection *)con;
-	sockaddr_to_string(buf, 128, &conn->client.rsa); 
+	sockaddr_to_string(buf, sizeof(buf), &conn->client.rsa); 
 	printf("enum %s\n", buf);
 }
 
@@ -83,8 +83,8 @@ int _tmain()
 	params.worker_threads_count = 8;
 	params.expected_connections_amount = COUNT;
 	params.connection_buffer_size = BUF_SIZE;
-	params.keep_alive_time = 5000;
-	params.keep_alive_interval = 500;
+	params.keep_alive_time = 10000;
+	params.keep_alive_interval = 1000;
 	params.connections_idle_timeout = 10000;
 	params.listener.listen_adr = "80";
 	params.listener.init_accepts_count = 200;
