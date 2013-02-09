@@ -40,7 +40,7 @@ static BOOL on_recv( connection *connection)
 
 	char *response = "HTTP/1.1 200 OK\r\n"
 		"Content-Type: text/html; charset=utf-8\r\n"
-	//	"Connection: close\r\n"
+		"Connection: close\r\n"
 		"Content-Length: %d\r\n\r\n";
 
 	sprintf((char *)connection->buffer, response, (u_int)strlen(html));

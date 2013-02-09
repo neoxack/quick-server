@@ -6,11 +6,9 @@
 #pragma warning (disable : 4204)
 #endif
 
-
 #pragma comment(lib, "ws2_32.lib")
 
 #include <process.h>
-//#include <stdio.h>
 #include <time.h>
 #include <Mstcpip.h>
 
@@ -26,8 +24,6 @@
 #if !defined(USE_NEDMALLOC_DLL)
 #include "nedmalloc.c"
 #endif
-
-
 
 using namespace nedalloc;
 
@@ -194,11 +190,10 @@ static io_context *alloc_context(qs_context *server)
 	return io_cont;
 }
 
-static void free_context(io_context * io_context)
+static void free_context(qs_context *server, io_context * io_context)
 {
-	using namespace nedalloc;
-	nedfree(io_context->connection.buffer);
-	nedfree(io_context);
+	nedpfree(server->pool, io_context->connection.buffer);
+	nedpfree(server->pool, io_context);
 }
 
 __inline SOCKET socket_create(qs_info *info)
@@ -631,7 +626,7 @@ unsigned __stdcall working_thread(void *s)
 			(*server->qs_params.callbacks.on_disconnect)(&io_context->connection);
 			socket_close(io_context->connection.client.sock, &server->qs_info);
 			connection_storage_delete(server->storage, &io_context->connection);	
-			free_context(io_context);
+			free_context(server, io_context);
 
 			for(; accepts < max_accepts; ++accepts)
 			{
@@ -669,32 +664,32 @@ unsigned __stdcall working_thread(void *s)
 		case(send_done):
 			io_context->last_activity = GetTickCount();
 			(*server->qs_params.callbacks.on_send)(&(io_context->connection));
-			continue;
+			break;
 
 		case(recv_done):
 			io_context->last_activity = GetTickCount();
 			(*server->qs_params.callbacks.on_recv)(&(io_context->connection));
-			continue;
+			break;
 
 		case(transmit_file):
 			io_context->last_activity = GetTickCount();
 			(*server->qs_params.callbacks.on_send_file)(&(io_context->connection));
-			continue;
+			break;
 
 		case(user_message):
 			io_context->last_activity = GetTickCount();
 			(*server->qs_params.callbacks.on_message)(&(io_context->connection), (void *)key);
-			continue;
+			break;
 
 		case(start_server):
 			for(; accepts < server->qs_params.listener.init_accepts_count; ++accepts)
 			{
 				init_accept(server, buf);		
 			}
-			free_context(io_context);
-			continue;
+			free_context(server, io_context);
+			break;
 		case(stop_server):
-			free_context(io_context);
+			free_context(server, io_context);
 			goto exit;
 		}
 
