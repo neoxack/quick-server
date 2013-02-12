@@ -4,12 +4,13 @@
 #define COUNT 10000
 #define BUF_SIZE 4096
 
+# define ADDRSTRLEN 64
 static void *server;
 
 static BOOL on_connect1( connection *connection )
 {
-	char buf1[64];
-	sockaddr_to_string(buf1, 64, &connection->client.rsa); 
+	char buf1[ADDRSTRLEN];
+	sockaddr_to_string(buf1, sizeof(buf1), &connection->client.rsa); 
 	printf("connection from: %s\n", buf1);
 	if(qs_recv(connection, connection->buffer, BUF_SIZE) != 0)
 	{
@@ -18,10 +19,11 @@ static BOOL on_connect1( connection *connection )
 	return 1;
 }
 
+
 static void on_disconnect1( connection *connection )
 {
-	char buf[128];
-	sockaddr_to_string(buf, 128, &connection->client.rsa); 
+	char buf[ADDRSTRLEN];
+	sockaddr_to_string(buf, sizeof(buf), &connection->client.rsa); 
 	printf("%s disconnect\n", buf);
 }
 

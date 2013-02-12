@@ -1,5 +1,7 @@
 #pragma once
 
+//#define USE_IPV6
+
 #ifdef MYDLL_EXPORTS
 #define MYDLL_API extern "C" __declspec(dllexport)
 #else
@@ -19,6 +21,8 @@ union usa {
 	struct sockaddr_in sin;
 #if defined(USE_IPV6)
 	struct sockaddr_in6 sin6;
+#else
+
 #endif
 };
 
