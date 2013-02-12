@@ -1740,7 +1740,7 @@ static FORCEINLINE void* win32mmap(size_t size) {
         return MFAIL;
     }
 #endif
-    if (!ptr) ptr = VirtualAlloc(baseaddress, size, baseaddress ? MEM_COMMIT : MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+    ptr = VirtualAlloc(baseaddress, size, baseaddress ? MEM_COMMIT : MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
 #ifdef DEFAULT_GRANULARITY_ALIGNED
 #if DEBUG
     if (lastWin32mmap && ptr!=lastWin32mmap) printf("Non-contiguous VirtualAlloc between %p and %p\n", ptr, lastWin32mmap);
@@ -3397,7 +3397,6 @@ static int init_mparams(void) {
     if ((sizeof(size_t) != sizeof(char*)) ||
         (MAX_SIZE_T < MIN_CHUNK_SIZE)  ||
         (sizeof(int) < 4)  ||
-        (MALLOC_ALIGNMENT < (size_t)8U) ||
         ((MALLOC_ALIGNMENT & (MALLOC_ALIGNMENT-SIZE_T_ONE)) != 0) ||
         ((MCHUNK_SIZE      & (MCHUNK_SIZE-SIZE_T_ONE))      != 0) ||
         ((gsize            & (gsize-SIZE_T_ONE))            != 0) ||

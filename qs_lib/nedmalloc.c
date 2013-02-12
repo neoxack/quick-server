@@ -1514,7 +1514,7 @@ static void threadcache_free(nedpool *RESTRICT p, threadcache *RESTRICT tc, int 
 #endif
 	tck->isforeign=isforeign;
 	tck->lastUsed=++tc->frees;
-	tck->size=(unsigned int) size;
+	tck->size=size;
 	tck->next=*binsptr;
 	tck->prev=0;
 	if(tck->next)

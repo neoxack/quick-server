@@ -345,7 +345,7 @@ static int parse_ipvX_addr_string(char *addr_buf, int port, union usa *u)
 	int a, b, c, d, len;
 
 	memset(u, 0, sizeof(usa));
-	if (sscanf(addr_buf, "%d.%d.%d.%d%n", &a, &b, &c, &d, &len) == 4
+	if (sscanf(addr_buf, "%d.%d.%d.%d%n", &a, &b, &c, &d, &len) == 4 //-V112
 		&& len == (int) strlen(addr_buf)) {
 			// Bind to a specific IPv4 address
 			u->sin.sin_family = AF_INET;
@@ -644,7 +644,7 @@ static void init_accept(qs_context *server, BYTE *out_buf)
 		new_context->connection.client.sock = client;
 
 		if(server->ex_funcs.AcceptEx(server->qs_socket.sock, new_context->connection.client.sock, out_buf, 0, sizeof(struct sockaddr_storage) + 16, sizeof(struct sockaddr_storage) + 16, 
-			&bytes_transferred, (LPOVERLAPPED)new_context) == 0 && (error = WSAGetLastError()!=997))
+			&bytes_transferred, (LPOVERLAPPED)new_context) == 0 && (error = WSAGetLastError())!=997)
 		{
 			cry(server, "%s: AcceptEx() fail with error: %d",	__func__, error);
 		}
