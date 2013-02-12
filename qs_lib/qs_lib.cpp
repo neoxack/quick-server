@@ -1,6 +1,5 @@
 #include "qs_lib.h"
 
-
 #if defined (_MSC_VER)
 // non-constant aggregate initializer: issued due to missing C99 support
 #pragma warning (disable : 4204)
@@ -13,6 +12,7 @@
 #include <Mstcpip.h>
 
 #define BUF_LEN 256
+#define HAVE_INET_NTOP
 
 #ifdef _MSC_VER
 #define __func__ __FUNCTION__
@@ -216,11 +216,7 @@ __inline void socket_close(SOCKET sock, qs_info *info)
 
 static BOOL init_ex_funcs(qs_context* server)
 {
-#if defined(USE_IPV6)
-	SOCKET s = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
-#else
-	SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-#endif
+	SOCKET s = socket_create(&server->qs_info);
 
 	GUID accept_ex_GUID =        WSAID_ACCEPTEX; 
 	GUID transmit_packets_GUID = WSAID_TRANSMITPACKETS; 
@@ -234,7 +230,7 @@ static BOOL init_ex_funcs(qs_context* server)
 		||(WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &disconnect_ex_GUID, sizeof(disconnect_ex_GUID), &server->ex_funcs.DisconnectEx, sizeof(server->ex_funcs.DisconnectEx), &dwTmp, NULL, NULL)!=0)
 		||(WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &transmitfile_GUID, sizeof(transmitfile_GUID), &server->ex_funcs.TransmitFile, sizeof(server->ex_funcs.TransmitFile), &dwTmp, NULL, NULL)!=0)) 
 		res = FALSE;
-	closesocket(s);
+	socket_close(s, &server->qs_info);
 	return res;
 }
 
@@ -287,36 +283,114 @@ MYDLL_API void qs_delete(void *qs_instance )
 	free(qs_instance);
 }
 
-// Examples: 80, 127.0.0.1:3128
-// TODO(lsm): add parsing of the IPv6 address
-static int parse_port_string(const char *ptr, struct socket *so)
+
+
+static int parse_ipvX_addr_string(char *addr_buf, int port, union usa *u) 
 {
-	int a, b, c, d, port, len;
+#if defined(USE_IPV6) && defined(HAVE_INET_NTOP)
+	// Only Windoze Vista (and newer) have inet_pton()
+	struct in_addr a = {0};
+	struct in6_addr a6 = {0};
+
+	memset(u, 0, sizeof(usa));
+	if (inet_pton(AF_INET6, addr_buf, &a6) > 0) {
+
+		u->sin6.sin6_family = AF_INET6;
+		u->sin6.sin6_port = htons((uint16_t) port);
+		u->sin6.sin6_addr = a6;
+		return 1;
+	} else if (inet_pton(AF_INET, addr_buf, &a) > 0) {
+
+		u->sin.sin_family = AF_INET;
+		u->sin.sin_port = htons((uint16_t) port);
+		u->sin.sin_addr = a;
+		return 1;
+	} else {
+		return 0;
+	}
+#elif defined(HAVE_GETNAMEINFO)
+	struct addrinfo hints = {0};
+	struct addrinfo *rset = NULL;
+#if defined(USE_IPV6)
+	hints.ai_family = AF_UNSPEC;
+#else
+	hints.ai_family = AF_INET;
+#endif
+	hints.ai_socktype = SOCK_STREAM; // TCP
+	hints.ai_flags = AI_NUMERICHOST;
+	if (!getaddrinfo(addr_buf, NULL, &hints, &rset) && rset) {
+		memcpy(&usa->u.sa, rset->ai_addr, rset->ai_addrlen);
+#if defined(USE_IPV6)
+		if (rset->ai_family == PF_INET6) {
+			usa->len = sizeof(usa->u.sin6);
+			assert(rset->ai_addrlen == sizeof(usa->u.sin6));
+			assert(usa->u.sin6.sin6_family == AF_INET6);
+			usa->u.sin6.sin6_port = htons((uint16_t) port);
+			freeaddrinfo(rset);
+			return 1;
+		} else
+#endif
+			if (rset->ai_family == PF_INET) {
+				usa->len = sizeof(usa->u.sin);
+				assert(rset->ai_addrlen == sizeof(usa->u.sin));
+				assert(usa->u.sin.sin_family == AF_INET);
+				usa->u.sin.sin_port = htons((uint16_t) port);
+				freeaddrinfo(rset);
+				return 1;
+			}
+	}
+	if (rset) freeaddrinfo(rset);
+	return 0;
+#else
+	int a, b, c, d, len;
+
+	memset(u, 0, sizeof(usa));
+	if (sscanf(addr_buf, "%d.%d.%d.%d%n", &a, &b, &c, &d, &len) == 4
+		&& len == (int) strlen(addr_buf)) {
+			// Bind to a specific IPv4 address
+			u->sin.sin_family = AF_INET;
+			u->sin.sin_port = htons((uint16_t) port);
+			u->sin.sin_addr.s_addr = htonl((a << 24) | (b << 16) | (c << 8) | d);
+			return 1;
+	}
+	return 0;
+#endif
+}
+
+// Examples: 80, 127.0.0.1:3128
+static int parse_port_string(const char *addr, struct socket *so) {
+	union usa *usa = &so->lsa;
+	int port, len;
+	char addr_buf[128];
 
 	memset(so, 0, sizeof(*so));
 
-	if (sscanf_s(ptr, "%d.%d.%d.%d:%d%n", &a, &b, &c, &d, &port, &len) == 5) 
-	{
-		// Bind to a specific IPv4 address
-		so->lsa.sin.sin_addr.s_addr = htonl((a << 24) | (b << 16) | (c << 8) | d);
-	} 
-	else if (sscanf_s(ptr, "%d%n", &port, &len) != 1 || len <= 0)
-	{
-		return 0;
-	}
-
+	if (sscanf(addr, " [%40[^]]]:%d%n", addr_buf, &port, &len) == 2
+		&& len > 0
+		&& parse_ipvX_addr_string(addr_buf, port, usa)) {
+			// all done: probably IPv6 URI
+	} else if (sscanf(addr, " %40[^:]:%d%n", addr_buf, &port, &len) == 2
+		&& len > 0
+		&& parse_ipvX_addr_string(addr_buf, port, usa)) {
+			// all done: probably IPv4 URI
+	} else if (sscanf(addr, "%d%n", &port, &len) != 1 ||
+		len <= 0 ||
+		(addr[len] && strchr("sp, \t", addr[len]) == NULL)) {
+			return 0;
+	} else {
 #if defined(USE_IPV6)
-	so->lsa.sin6.sin6_family = AF_INET6;
-	so->lsa.sin6.sin6_port = htons((u_short) port);
+		usa->sin6.sin6_family = AF_INET6;
+		usa->sin6.sin6_port = htons((uint16_t) port);
 #else
-	so->lsa.sin.sin_family = AF_INET;
-	so->lsa.sin.sin_port = htons((u_short)port);
+		usa->sin.sin_family = AF_INET;
+		usa->sin.sin_port = htons((uint16_t) port);
 #endif
+	}
 
 	return 1;
 }
 
-#define THREAD_STACK_SIZE 256
+#define THREAD_STACK_SIZE 1024
 unsigned __stdcall working_thread(void *s);
 void WINAPI clean_timer_callback(void * , BOOL );
 
@@ -341,7 +415,7 @@ MYDLL_API unsigned int qs_start( void *qs_instance, qs_params * params )
 			__func__, "[IP_ADDRESS:]PORT[s|p]");
 		return ERROR_INVALID_PARAMETER;
 	} 
-	if ((so.sock = socket(so.lsa.sa.sa_family, SOCK_STREAM, 6)) ==
+	if ((so.sock = socket(so.lsa.sa.sa_family, SOCK_STREAM, IPPROTO_TCP)) ==
 		INVALID_SOCKET ||
 
 		// Set TCP keep-alive. This is needed because if HTTP-level
@@ -411,7 +485,6 @@ void WINAPI clean_timer_callback(void * context, BOOL fTimerOrWaitFired)
 	connection_storage *storage = server->storage;
 	connection_storage_traverse(storage, idle_check, server);
 }
-
 
 MYDLL_API unsigned int qs_stop( void *qs_instance )
 {
@@ -504,7 +577,6 @@ MYDLL_API unsigned int qs_close_connection( void *qs_instance, connection *conne
 	server = (qs_context*)qs_instance;
 	context = get_context(connection);
 	context->ended_operation = on_disconnect;
-	//PostQueuedCompletionStatus(server->iocp, 0, (uintptr_t)0, (LPOVERLAPPED)context);
 	server->ex_funcs.DisconnectEx(connection->client.sock, (LPOVERLAPPED)context, 0, 0);
 	return ERROR_SUCCESS;
 }
@@ -539,20 +611,23 @@ MYDLL_API unsigned int qs_enum_connections( void *qs_instance, ENUM_CONNECTIONS_
 	return ERROR_SUCCESS;
 }
 
-MYDLL_API void sockaddr_to_string(char *buf, size_t len, const union usa *usa) 
-{
+
+
+MYDLL_API void sockaddr_to_string(char *buf, size_t len, const union usa *usa) {
 	buf[0] = '\0';
-#if defined(USE_IPV6)
-	inet_ntop(usa->sa.sa_family, usa->sa.sa_family == AF_INET ?
-		(void *) &usa->sin.sin_addr :
-	(void *) &usa->sin6.sin6_addr, buf, len);
-#elif defined(_WIN32)
+#if defined(USE_IPV6) && defined(HAVE_INET_NTOP)
 	// Only Windoze Vista (and newer) have inet_ntop()
+	inet_ntop(usa->sa.sa_family, (usa->sa.sa_family == AF_INET ?
+		(void *) &usa->sin.sin_addr :
+	(void *) &usa->sin6.sin6_addr), buf, len);
+#elif defined(HAVE_INET_NTOP)
+	inet_ntop(usa->sa.sa_family, (void *) &usa->sin.sin_addr, buf, len);
+#elif defined(_WIN32)
 	strncpy(buf, inet_ntoa(usa->sin.sin_addr), len);
 #else
-	inet_ntop(usa->sa.sa_family, (void *) &usa->sin.sin_addr, buf, len);
+#error check your platform for inet_ntop/etc.
 #endif
-
+	buf[len - 1] = 0;
 }
 
 static void init_accept(qs_context *server, BYTE *out_buf)
@@ -560,6 +635,7 @@ static void init_accept(qs_context *server, BYTE *out_buf)
 	SOCKET client;
 	io_context *new_context;
 	u_long bytes_transferred;
+	int error;
 	new_context = alloc_context(server);
 	if(new_context != NULL)
 	{
@@ -567,10 +643,10 @@ static void init_accept(qs_context *server, BYTE *out_buf)
 		new_context->ended_operation = on_connect;
 		new_context->connection.client.sock = client;
 
-		if(server->ex_funcs.AcceptEx(server->qs_socket.sock, new_context->connection.client.sock, out_buf, 0, sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16, 
-			&bytes_transferred, (LPOVERLAPPED)new_context) != 0)
+		if(server->ex_funcs.AcceptEx(server->qs_socket.sock, new_context->connection.client.sock, out_buf, 0, sizeof(struct sockaddr_storage) + 16, sizeof(struct sockaddr_storage) + 16, 
+			&bytes_transferred, (LPOVERLAPPED)new_context) == 0 && (error = WSAGetLastError()!=997))
 		{
-			cry(server, "%s: AcceptEx() fail with error: %d",	__func__, WSAGetLastError());
+			cry(server, "%s: AcceptEx() fail with error: %d",	__func__, error);
 		}
 	}
 }
@@ -598,19 +674,19 @@ unsigned __stdcall working_thread(void *s)
 	qs_context *server = (qs_context *)s;
 	u_long bytes_transferred;
 	ULONG_PTR key;
-	io_context *io_context;
-	unsigned char buf[128];
+	io_context *io_ctx;
+	unsigned char buf[256];
 	int len;
 	u_long max_accepts = server->qs_params.listener.init_accepts_count / server->qs_params.worker_threads_count;
 	u_long accepts = 0;
 
 	for(;;)
 	{
-		if (!GetQueuedCompletionStatus(server->iocp, &bytes_transferred, &key, (LPOVERLAPPED *)&io_context, INFINITE))
+		if (!GetQueuedCompletionStatus(server->iocp, &bytes_transferred, &key, (LPOVERLAPPED *)&io_ctx, INFINITE))
 		{
-			if(io_context != NULL)
+			if(io_ctx != NULL)
 			{
-				cry(server, "%s: GetQueuedCompletionStatus() fail with error: %d",	__func__, WSAGetLastError());
+				cry(server, "%s: GetQueuedCompletionStatus() fail with error: %d\n",	__func__, GetLastError());
 				continue;
 			}
 			else
@@ -621,12 +697,12 @@ unsigned __stdcall working_thread(void *s)
 			
 		}
 
-		if((!bytes_transferred && io_context->ended_operation != on_connect) || io_context->ended_operation == on_disconnect)
+		if((!bytes_transferred && io_ctx->ended_operation != on_connect) || io_ctx->ended_operation == on_disconnect)
 		{
-			(*server->qs_params.callbacks.on_disconnect)(&io_context->connection);
-			socket_close(io_context->connection.client.sock, &server->qs_info);
-			connection_storage_delete(server->storage, &io_context->connection);	
-			free_context(server, io_context);
+			(*server->qs_params.callbacks.on_disconnect)(&io_ctx->connection);
+			socket_close(io_ctx->connection.client.sock, &server->qs_info);
+			connection_storage_delete(server->storage, &io_ctx->connection);	
+			free_context(server, io_ctx);
 
 			for(; accepts < max_accepts; ++accepts)
 			{
@@ -635,50 +711,48 @@ unsigned __stdcall working_thread(void *s)
 			continue;
 		}
 
-		if(io_context->ended_operation == on_connect) 
+		if(io_ctx->ended_operation == on_connect) 
 		{	
 			accepts--;
-			io_context->last_activity = GetTickCount();
-			
-			setsockopt(io_context->connection.client.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
+			io_ctx->last_activity = GetTickCount();
+			setsockopt(io_ctx->connection.client.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
 				(char *)&server->qs_socket, sizeof(server->qs_socket) );
-			set_keep_alive(&io_context->connection, server->qs_params.keep_alive_time, server->qs_params.keep_alive_interval);
-			len = sizeof(io_context->connection.client.lsa.sa);
-			getsockname(io_context->connection.client.sock, &io_context->connection.client.lsa.sa, &len);
-			len = sizeof(io_context->connection.client.rsa.sa);
-			getpeername(io_context->connection.client.sock, &io_context->connection.client.rsa.sa, &len);
-		
-			if(CreateIoCompletionPort((HANDLE)io_context->connection.client.sock, server->iocp, 0, 0) == NULL )
+			set_keep_alive(&io_ctx->connection, server->qs_params.keep_alive_time, server->qs_params.keep_alive_interval);
+			len = sizeof(io_ctx->connection.client.lsa);
+			getsockname(io_ctx->connection.client.sock, &io_ctx->connection.client.lsa.sa, &len);
+			len = sizeof(io_ctx->connection.client.rsa);
+			getpeername(io_ctx->connection.client.sock, &io_ctx->connection.client.rsa.sa, &len);
+
+			if(CreateIoCompletionPort((HANDLE)io_ctx->connection.client.sock, server->iocp, 0, 0) == NULL )
 			{
 				cry(server, "%s: CreateIoCompletionPort() fail with error: %d",	__func__, GetLastError());
 			}
-			connection_storage_add(server->storage, &io_context->connection);		
-			(*server->qs_params.callbacks.on_connect)(&(io_context->connection));
+			connection_storage_add(server->storage, &io_ctx->connection);	
+			server->qs_params.callbacks.on_connect(&io_ctx->connection);
 			continue;
 		}
-
-		
-		io_context->connection.bytes_transferred = bytes_transferred;
-		switch(io_context->ended_operation) 
+	
+		io_ctx->connection.bytes_transferred = bytes_transferred;
+		switch(io_ctx->ended_operation) 
 		{
 		case(send_done):
-			io_context->last_activity = GetTickCount();
-			(*server->qs_params.callbacks.on_send)(&(io_context->connection));
+			io_ctx->last_activity = GetTickCount();
+			(*server->qs_params.callbacks.on_send)(&(io_ctx->connection));
 			break;
 
 		case(recv_done):
-			io_context->last_activity = GetTickCount();
-			(*server->qs_params.callbacks.on_recv)(&(io_context->connection));
+			io_ctx->last_activity = GetTickCount();
+			(*server->qs_params.callbacks.on_recv)(&(io_ctx->connection));
 			break;
 
 		case(transmit_file):
-			io_context->last_activity = GetTickCount();
-			(*server->qs_params.callbacks.on_send_file)(&(io_context->connection));
+			io_ctx->last_activity = GetTickCount();
+			(*server->qs_params.callbacks.on_send_file)(&(io_ctx->connection));
 			break;
 
 		case(user_message):
-			io_context->last_activity = GetTickCount();
-			(*server->qs_params.callbacks.on_message)(&(io_context->connection), (void *)key);
+			io_ctx->last_activity = GetTickCount();
+			(*server->qs_params.callbacks.on_message)(&(io_ctx->connection), (void *)key);
 			break;
 
 		case(start_server):
@@ -686,10 +760,10 @@ unsigned __stdcall working_thread(void *s)
 			{
 				init_accept(server, buf);		
 			}
-			free_context(server, io_context);
+			free_context(server, io_ctx);
 			break;
 		case(stop_server):
-			free_context(server, io_context);
+			free_context(server, io_ctx);
 			goto exit;
 		}
 
