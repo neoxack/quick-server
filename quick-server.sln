@@ -5,6 +5,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "qs_lib", "qs_lib\qs_lib.vcx
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "qs_lib_test", "qs_lib_test\qs_lib_test.vcxproj", "{98BABF16-18FE-41A6-9D32-FB92A3EA05F0}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "allocator_tests", "allocator_tests\allocator_tests.vcxproj", "{E9DBF425-9287-4F24-882F-50A065ABE2EC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Mixed Platforms = Debug|Mixed Platforms
@@ -39,6 +41,16 @@ Global
 		{98BABF16-18FE-41A6-9D32-FB92A3EA05F0}.Release|Win32.Build.0 = Release|Win32
 		{98BABF16-18FE-41A6-9D32-FB92A3EA05F0}.Release|x64.ActiveCfg = Release|x64
 		{98BABF16-18FE-41A6-9D32-FB92A3EA05F0}.Release|x64.Build.0 = Release|x64
+		{E9DBF425-9287-4F24-882F-50A065ABE2EC}.Debug|Mixed Platforms.ActiveCfg = Debug|Win32
+		{E9DBF425-9287-4F24-882F-50A065ABE2EC}.Debug|Mixed Platforms.Build.0 = Debug|Win32
+		{E9DBF425-9287-4F24-882F-50A065ABE2EC}.Debug|Win32.ActiveCfg = Debug|Win32
+		{E9DBF425-9287-4F24-882F-50A065ABE2EC}.Debug|Win32.Build.0 = Debug|Win32
+		{E9DBF425-9287-4F24-882F-50A065ABE2EC}.Debug|x64.ActiveCfg = Debug|Win32
+		{E9DBF425-9287-4F24-882F-50A065ABE2EC}.Release|Mixed Platforms.ActiveCfg = Release|Win32
+		{E9DBF425-9287-4F24-882F-50A065ABE2EC}.Release|Mixed Platforms.Build.0 = Release|Win32
+		{E9DBF425-9287-4F24-882F-50A065ABE2EC}.Release|Win32.ActiveCfg = Release|Win32
+		{E9DBF425-9287-4F24-882F-50A065ABE2EC}.Release|Win32.Build.0 = Release|Win32
+		{E9DBF425-9287-4F24-882F-50A065ABE2EC}.Release|x64.ActiveCfg = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
