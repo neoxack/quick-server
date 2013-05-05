@@ -69,7 +69,6 @@ typedef struct _qs_context {
 	connection_storage * storage;
 	struct socket qs_socket;
 	qs_params qs_params;
-	nedpool *pool;
 
 	struct _ex_funcs {
 		LPFN_ACCEPTEX AcceptEx; 
@@ -82,23 +81,23 @@ typedef struct _qs_context {
 
 
 
-void *my_alloc(size_t size)
+MYDLL_API void* qs_memory_alloc(size_t size)
 {
 	return nedmalloc(size);
 }
 
-void my_free(void *p)
+MYDLL_API void qs_memory_free(void *p)
 {
 	nedfree(p);
 }
 
-static connection_storage * connection_storage_new(size_t max_count)
+static connection_storage * connection_storage_new()
 {
-	connection_storage * storage = (connection_storage *)malloc(sizeof connection_storage);
+	connection_storage * storage = (connection_storage *)qs_memory_alloc(sizeof connection_storage);
 	if(!storage) return NULL;
 	allocator allocator;
-	allocator.alloc = my_alloc;
-	allocator.free = my_free;
+	allocator.alloc = qs_memory_alloc;
+	allocator.free = qs_memory_free;
 
 	storage->list = create_list(allocator);
 	InitializeCriticalSectionAndSpinCount(&storage->cs, 0x400);
@@ -136,7 +135,7 @@ static void connection_storage_free(connection_storage * storage)
 {
 	DeleteCriticalSection(&storage->cs);
 	empty_list(storage->list);
-	free(storage);
+	qs_memory_free(storage);
 }
 
 #define malloc nedmalloc
@@ -184,16 +183,17 @@ static uintptr_t create_thread(unsigned (__stdcall * start_addr) (void *), void 
 
 static io_context *alloc_context(qs_context *server)
 {
-	io_context *io_cont = (io_context *)nedpmalloc(server->pool, sizeof(io_context));
+	io_context *io_cont = (io_context *)qs_memory_alloc(sizeof(io_context));
 	memset(io_cont, 0, sizeof(io_context));
-	io_cont->connection.buffer = (BYTE *)nedpmalloc(server->pool, (size_t)server->qs_params.connection_buffer_size);
+	io_cont->connection.buffer = (BYTE *)qs_memory_alloc((size_t)server->qs_params.connection_buffer_size);
 	return io_cont;
 }
 
 static void free_context(qs_context *server, io_context * io_context)
 {
-	nedpfree(server->pool, io_context->connection.buffer);
-	nedpfree(server->pool, io_context);
+	qs_memory_free(io_context->connection.buffer);
+	qs_memory_free(io_context->connection.user_data);
+	qs_memory_free(io_context);
 }
 
 __inline SOCKET socket_create(qs_info *info)
@@ -346,7 +346,8 @@ static int parse_ipvX_addr_string(char *addr_buf, int port, union usa *u)
 
 	memset(u, 0, sizeof(usa));
 	if (sscanf(addr_buf, "%d.%d.%d.%d%n", &a, &b, &c, &d, &len) == 4 //-V112
-		&& len == (int) strlen(addr_buf)) {
+		&& len == (int) strlen(addr_buf)) 
+	{
 			// Bind to a specific IPv4 address
 			u->sin.sin_family = AF_INET;
 			u->sin.sin_port = htons((uint16_t) port);
@@ -435,9 +436,9 @@ MYDLL_API unsigned int qs_start( void *qs_instance, qs_params * params )
 		return error;
 	} 
 
-	server->pool = nedcreatepool(server->qs_params.expected_connections_amount * ((size_t)server->qs_params.connection_buffer_size + sizeof(io_context)), server->qs_params.worker_threads_count);
+	
 
-	server->storage = connection_storage_new(server->qs_params.expected_connections_amount);
+	server->storage = connection_storage_new();
 
 	memcpy(&server->qs_socket, &so, sizeof(so));
 	CreateIoCompletionPort((HANDLE)server->qs_socket.sock, server->iocp, server->qs_socket.sock, 0);
@@ -508,8 +509,7 @@ MYDLL_API unsigned int qs_stop( void *qs_instance )
 	socket_close(server->qs_socket.sock, &server->qs_info);
 	CloseHandle(server->iocp);
 	connection_storage_free(server->storage);
-	free(server->threads);
-	neddestroypool(server->pool);
+	free(server->threads);	
 	neddisablethreadcache(0);
 	server->qs_info.sockets_count = 0;
 	server->qs_info.active_connections_count = 0;
@@ -612,7 +612,6 @@ MYDLL_API unsigned int qs_enum_connections( void *qs_instance, ENUM_CONNECTIONS_
 }
 
 
-
 MYDLL_API void sockaddr_to_string(char *buf, size_t len, const union usa *usa) {
 	buf[0] = '\0';
 #if defined(USE_IPV6) && defined(HAVE_INET_NTOP)
@@ -677,8 +676,8 @@ unsigned __stdcall working_thread(void *s)
 	io_context *io_ctx;
 	unsigned char buf[256];
 	int len;
-	u_long max_accepts = server->qs_params.listener.init_accepts_count / server->qs_params.worker_threads_count;
-	u_long accepts = 0;
+	u_long max_accepts = server->qs_params.listener.init_accepts_count;
+	u_long accepts = max_accepts;
 
 	for(;;)
 	{
@@ -694,7 +693,6 @@ unsigned __stdcall working_thread(void *s)
 				cry(server, "%s: GetQueuedCompletionStatus() fail, io_context == NULL");
 				break;
 			}
-			
 		}
 
 		if((!bytes_transferred && io_ctx->ended_operation != on_connect) || io_ctx->ended_operation == on_disconnect)
@@ -703,7 +701,6 @@ unsigned __stdcall working_thread(void *s)
 			socket_close(io_ctx->connection.client.sock, &server->qs_info);
 			connection_storage_delete(server->storage, &io_ctx->connection);	
 			free_context(server, io_ctx);
-
 			for(; accepts < max_accepts; ++accepts)
 			{
 				init_accept(server, buf);		
@@ -713,7 +710,7 @@ unsigned __stdcall working_thread(void *s)
 
 		if(io_ctx->ended_operation == on_connect) 
 		{	
-			accepts--;
+			--accepts;
 			io_ctx->last_activity = GetTickCount();
 			setsockopt(io_ctx->connection.client.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
 				(char *)&server->qs_socket, sizeof(server->qs_socket) );
@@ -756,7 +753,7 @@ unsigned __stdcall working_thread(void *s)
 			break;
 
 		case(start_server):
-			for(; accepts < server->qs_params.listener.init_accepts_count; ++accepts)
+			for(accepts = 0; accepts < server->qs_params.listener.init_accepts_count; ++accepts)
 			{
 				init_accept(server, buf);		
 			}
@@ -769,8 +766,6 @@ unsigned __stdcall working_thread(void *s)
 
 	}
 exit:
-	neddisablethreadcache(server->pool);
-
 	return 0;
 }
 
