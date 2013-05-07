@@ -1,8 +1,7 @@
 #include "stdafx.h"
 #include "qs_lib.h"
 
-#define COUNT 10000
-#define BUF_SIZE 4096 * 100
+#define BUF_SIZE 1024 * 400
 
 # define ADDRSTRLEN 64
 static void *server;
@@ -28,13 +27,11 @@ static BOOL on_connect1( connection *connection )
 	return 1;
 }
 
-
 static void on_disconnect1( connection *connection )
 {
 	char buf[ADDRSTRLEN];
 
 	sockaddr_to_string(buf, sizeof(buf), &connection->client.rsa); 
-	//qs_memory_free(connection->user_data);
 	printf("%s disconnect\n", buf);
 }
 
@@ -54,7 +51,7 @@ static BOOL on_recv( connection *connection)
 
 	char *response = "HTTP/1.1 200 OK\r\n"
 		"Content-Type: text/html; charset=utf-8\r\n"
-		"Connection: close\r\n"
+		//"Connection: close\r\n"
 		"Content-Length: %d\r\n\r\n";
 
 	sprintf((char *)connection->buffer, response, (u_int)strlen(html));
@@ -81,7 +78,7 @@ static void on_error( wchar_t *error)
 	wprintf(L"%s", error);
 }
 
-static void  enum_proc(void *con, void *param)
+static void  enum_proc(connection *con)
 {
 	char buf[64];
 	connection *conn = (connection *)con;
@@ -99,7 +96,7 @@ int _tmain()
 	params.keep_alive_time = 10000;
 	params.keep_alive_interval = 1000;
 	params.connections_idle_timeout = 10000;
-	params.listener.listen_adr = "80";
+	params.listener.listen_adr = "127.0.0.1:80";
 	params.listener.init_accepts_count = 10;
 
 	params.callbacks.on_connect = on_connect1;
@@ -114,7 +111,7 @@ int _tmain()
 	{
 		printf("%s", "Server started\n");
 		system("pause");
-		qs_enum_connections(server, enum_proc, 0);
+		qs_enum_connections(server, enum_proc);
 		system("pause");
 		qs_stop(server);
 		printf("%s", "Server stopped\n");

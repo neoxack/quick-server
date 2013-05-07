@@ -18,7 +18,7 @@
 #define __func__ __FUNCTION__
 #endif
 
-#include "dl_list.h"
+//#include "dl_list.h"
 
 #include "nedmalloc.h"
 #if !defined(USE_NEDMALLOC_DLL)
@@ -28,8 +28,9 @@
 using namespace nedalloc;
 
 typedef struct _connection_storage {
-	list *list;
-	allocator allocator;
+	connection **connections;
+	size_t count;
+	size_t size;
 	CRITICAL_SECTION cs;
 } connection_storage;
 
@@ -50,16 +51,6 @@ typedef enum _qs_status {
 	runned
 } qs_status;
 
-struct _io_context {
-	OVERLAPPED ov;
-	struct _connection connection;
-	states ended_operation;
-	WSABUF wsa_buf;
-	u_long last_activity;
-};
-
-typedef struct _io_context io_context;
-
 typedef struct _qs_context {
 	qs_status status;
 	qs_info qs_info;
@@ -79,7 +70,16 @@ typedef struct _qs_context {
 
 } qs_context;
 
+struct _io_context {
+	OVERLAPPED ov;
+	struct _connection connection;
+	qs_context *server_ctx;
+	states ended_operation;
+	WSABUF wsa_buf;
+	u_long last_activity;
+};
 
+typedef struct _io_context io_context;
 
 MYDLL_API void* qs_memory_alloc(size_t size)
 {
@@ -91,31 +91,48 @@ MYDLL_API void qs_memory_free(void *p)
 	nedfree(p);
 }
 
-static connection_storage * connection_storage_new()
+static connection_storage * connection_storage_new(size_t max_count_of_connections)
 {
 	connection_storage * storage = (connection_storage *)qs_memory_alloc(sizeof connection_storage);
 	if(!storage) return NULL;
-	allocator allocator;
-	allocator.alloc = qs_memory_alloc;
-	allocator.free = qs_memory_free;
-
-	storage->list = create_list(allocator);
+	storage->connections = (connection **)qs_memory_alloc(sizeof(connection *) * max_count_of_connections);
+	storage->size = max_count_of_connections;
+	storage->count = 0;
 	InitializeCriticalSectionAndSpinCount(&storage->cs, 0x400);
 	return storage;
 }
 
-
-static void connection_storage_add(connection_storage * storage, connection * con)
+static bool connection_storage_is_full(connection_storage * storage)
 {
 	EnterCriticalSection(&storage->cs);
-	push_front(storage->list, con);
+	if (storage->count >= storage->size) 
+	{
+		LeaveCriticalSection(&storage->cs);
+		return true;
+	}
+	LeaveCriticalSection(&storage->cs);
+	return false;
+}
+
+
+static void connection_storage_add(connection_storage * storage, connection * connection)
+{
+	EnterCriticalSection(&storage->cs);
+	if(storage->count < storage->size)
+	{
+		storage->connections[storage->count] = connection;
+		storage->count++;
+	}
 	LeaveCriticalSection(&storage->cs);
 }
 
-static void connection_storage_traverse(connection_storage * storage, void (*do_func) (void *, void *), void *param)
+static void connection_storage_traverse(connection_storage * storage, void (*do_func) (connection *))
 {
 	EnterCriticalSection(&storage->cs);
-	traverse(storage->list, do_func, param);
+	for(size_t i = 0; i < storage->count; i++)
+	{
+		do_func(storage->connections[i]);
+	}
 	LeaveCriticalSection(&storage->cs);
 }
 
@@ -127,14 +144,33 @@ int eq(const void* a, const void* b)
 static void connection_storage_delete(connection_storage * storage, connection * connection)
 {
 	EnterCriticalSection(&storage->cs);
-	remove_data_once(storage->list, connection, eq);
+	if(storage->count == 0) 
+	{
+		LeaveCriticalSection(&storage->cs);
+		return;
+	}
+	if(storage->connections[storage->count - 1] == connection) 
+	{
+		storage->count--;
+		LeaveCriticalSection(&storage->cs);
+		return;
+	}
+	for(size_t i = 0; i < storage->count - 1; i++)
+	{
+		if(storage->connections[i] == connection)
+		{
+			storage->count--;
+			storage->connections[i] = storage->connections[storage->count];
+			break;
+		}
+	}
 	LeaveCriticalSection(&storage->cs);
 }
 
 static void connection_storage_free(connection_storage * storage)
 {
 	DeleteCriticalSection(&storage->cs);
-	empty_list(storage->list);
+	qs_memory_free(storage->connections);
 	qs_memory_free(storage);
 }
 
@@ -186,6 +222,7 @@ static io_context *alloc_context(qs_context *server)
 	io_context *io_cont = (io_context *)qs_memory_alloc(sizeof(io_context));
 	memset(io_cont, 0, sizeof(io_context));
 	io_cont->connection.buffer = (BYTE *)qs_memory_alloc((size_t)server->qs_params.connection_buffer_size);
+	io_cont->server_ctx = server;
 	return io_cont;
 }
 
@@ -282,8 +319,6 @@ MYDLL_API void qs_delete(void *qs_instance )
 {
 	free(qs_instance);
 }
-
-
 
 static int parse_ipvX_addr_string(char *addr_buf, int port, union usa *u) 
 {
@@ -432,13 +467,12 @@ MYDLL_API unsigned int qs_start( void *qs_instance, qs_params * params )
 	{
 		u_int error = GetLastError();
 		closesocket(so.sock);
-		cry(server, "%s: cannot bind to %s", __func__, params->listener.listen_adr);
+		cry(server, "%s: cannot bind to %s, error: %d", __func__, params->listener.listen_adr, error);
 		return error;
 	} 
 
-	
-
-	server->storage = connection_storage_new();
+	if (server->qs_params.max_count_of_connections == 0) server->qs_params.max_count_of_connections = 10000;
+	server->storage = connection_storage_new(server->qs_params.max_count_of_connections);
 
 	memcpy(&server->qs_socket, &so, sizeof(so));
 	CreateIoCompletionPort((HANDLE)server->qs_socket.sock, server->iocp, server->qs_socket.sock, 0);
@@ -467,24 +501,21 @@ MYDLL_API unsigned int qs_start( void *qs_instance, qs_params * params )
 
 }
 
-void idle_check(void * p, void * user_data)
+static void idle_check(connection *con)
 {
-	qs_context *server = (qs_context *)user_data;
-	connection *con = (connection *)p;
 	io_context *context = get_context(con);
 	u_long count = GetTickCount();
-	if((count - context->last_activity) > server->qs_params.connections_idle_timeout)
+	if((count - context->last_activity) > context->server_ctx->qs_params.connections_idle_timeout)
 	{
 		shutdown(con->client.sock, SD_BOTH);
 	}
-
 }
 
 void WINAPI clean_timer_callback(void * context, BOOL fTimerOrWaitFired)
 {
 	qs_context * server = (qs_context *)context;
 	connection_storage *storage = server->storage;
-	connection_storage_traverse(storage, idle_check, server);
+	connection_storage_traverse(storage, idle_check);
 }
 
 MYDLL_API unsigned int qs_stop( void *qs_instance )
@@ -492,7 +523,11 @@ MYDLL_API unsigned int qs_stop( void *qs_instance )
 	qs_context* server = (qs_context*)qs_instance;
 	size_t i;
 
-	DeleteTimerQueueTimer(NULL, server->timer, NULL);
+	u_long idle_check_period = server->qs_params.connections_idle_timeout;
+	if(idle_check_period)
+	{
+		DeleteTimerQueueTimer(NULL, server->timer, NULL);
+	}
 	for(i = 0; i<(size_t)server->qs_params.worker_threads_count; i++)
 	{
 		io_context *io_context = alloc_context(server);
@@ -602,15 +637,14 @@ MYDLL_API unsigned int qs_query_qs_information( void *qs_instance, qs_info *qs_i
 	return ERROR_SUCCESS;
 }
 
-MYDLL_API unsigned int qs_enum_connections( void *qs_instance, ENUM_CONNECTIONS_PROC enum_connections_proc, void *param)
+MYDLL_API unsigned int qs_enum_connections( void *qs_instance, ENUM_CONNECTIONS_PROC enum_connections_proc)
 {
 	qs_context *server;
 	if(!qs_instance || !enum_connections_proc) return ERROR_INVALID_PARAMETER;
 	server = (qs_context*)qs_instance;
-	connection_storage_traverse(server->storage, enum_connections_proc, param);
+	connection_storage_traverse(server->storage, enum_connections_proc);
 	return ERROR_SUCCESS;
 }
-
 
 MYDLL_API void sockaddr_to_string(char *buf, size_t len, const union usa *usa) {
 	buf[0] = '\0';
@@ -703,7 +737,7 @@ unsigned __stdcall working_thread(void *s)
 			free_context(server, io_ctx);
 			for(; accepts < max_accepts; ++accepts)
 			{
-				init_accept(server, buf);		
+				if(!connection_storage_is_full(server->storage)) init_accept(server, buf);		
 			}
 			continue;
 		}

@@ -50,7 +50,7 @@ typedef BOOL (*ON_SEND_PROC)( connection *connection);
 typedef BOOL (*ON_SENDFILE_PROC)( connection *connection);
 typedef void (*ON_ERROR_PROC)( wchar_t *str_error);
 typedef void (*USERMESSAGE_HANDLER_PROC)(connection *connection, void *message);
-typedef void ( *ENUM_CONNECTIONS_PROC)(void *connection, void *param);
+typedef void ( *ENUM_CONNECTIONS_PROC)(connection *connection);
 
 typedef struct _qs_params {
 	struct _listener {
@@ -63,6 +63,7 @@ typedef struct _qs_params {
 	u_long keep_alive_time;
 	u_long keep_alive_interval;
 	unsigned int connections_idle_timeout;
+	size_t max_count_of_connections;
 
 	struct _callbacks {
 		ON_CONNECT_PROC               on_connect;
@@ -91,7 +92,7 @@ MYDLL_API unsigned int   qs_recv(connection *connection, BYTE *buffer, u_long le
 MYDLL_API unsigned int   qs_close_connection( void *qs_instance, connection *connection );
 MYDLL_API unsigned int   qs_post_message_to_pool(void *qs_instance, void *message, connection *connection);
 MYDLL_API unsigned int   qs_query_qs_information( void *qs_instance, qs_info *qs_information );
-MYDLL_API unsigned int   qs_enum_connections( void *qs_instance, ENUM_CONNECTIONS_PROC enum_connections_proc, void *param);
+MYDLL_API unsigned int qs_enum_connections( void *qs_instance, ENUM_CONNECTIONS_PROC enum_connections_proc);
 MYDLL_API void			 sockaddr_to_string(char *buf, size_t len, const union usa *usa) ;
 MYDLL_API void* qs_memory_alloc(size_t size);
 MYDLL_API void  qs_memory_free(void *p);
