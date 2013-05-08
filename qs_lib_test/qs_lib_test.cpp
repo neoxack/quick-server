@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include "qs_lib.h"
 
-#define BUF_SIZE 1024 * 400
+#define BUF_SIZE 1024 * 1024
 
 # define ADDRSTRLEN 64
 static void *server;
@@ -14,13 +14,14 @@ typedef struct test_struct {
 static BOOL on_connect1( connection *connection )
 {
 	char buf1[ADDRSTRLEN];
-	sockaddr_to_string(buf1, sizeof(buf1), &connection->client.rsa); 
+	sockaddr_to_string(buf1, sizeof(buf1), &connection->socket.rsa); 
 	printf("connection from: %s\n", buf1);
 	test_struct *data = (test_struct *)qs_memory_alloc(sizeof(test_struct));
 	data->flag = true;
 	data->num = 50;
 	connection->user_data = data;
-	if(qs_recv(connection, connection->buffer, BUF_SIZE) != 0)
+	connection->buffer.data_len = BUF_SIZE;
+	if(qs_recv(connection) != 0)
 	{
 		qs_close_connection(server, connection);
 	}
@@ -31,7 +32,7 @@ static void on_disconnect1( connection *connection )
 {
 	char buf[ADDRSTRLEN];
 
-	sockaddr_to_string(buf, sizeof(buf), &connection->client.rsa); 
+	sockaddr_to_string(buf, sizeof(buf), &connection->socket.rsa); 
 	printf("%s disconnect\n", buf);
 }
 
@@ -54,10 +55,11 @@ static BOOL on_recv( connection *connection)
 		//"Connection: close\r\n"
 		"Content-Length: %d\r\n\r\n";
 
-	sprintf((char *)connection->buffer, response, (u_int)strlen(html));
-	strcat((char *)connection->buffer, html);
+	sprintf((char *)connection->buffer.buf, response, (u_int)strlen(html));
+	strcat((char *)connection->buffer.buf, html);
+	connection->buffer.data_len = (u_long)strlen((char *)connection->buffer.buf);
 
-	if (qs_send(connection, connection->buffer, (u_long)strlen((char *)connection->buffer)) != 0)
+	if (qs_send(connection) != 0)
 	{
 		qs_close_connection(server, connection);
 	}
@@ -66,7 +68,8 @@ static BOOL on_recv( connection *connection)
 
 static BOOL on_send( connection *connection)
 {
-	if(qs_recv(connection, connection->buffer, BUF_SIZE)!=0)
+	connection->buffer.data_len = BUF_SIZE;
+	if(qs_recv(connection)!=0)
 	{
 		qs_close_connection(server, connection);
 	}
@@ -82,7 +85,7 @@ static void  enum_proc(connection *con)
 {
 	char buf[64];
 	connection *conn = (connection *)con;
-	sockaddr_to_string(buf, sizeof(buf), &conn->client.rsa); 
+	sockaddr_to_string(buf, sizeof(buf), &conn->socket.rsa); 
 	printf("enum %s\n", buf);
 }
 
@@ -96,7 +99,7 @@ int _tmain()
 	params.keep_alive_time = 10000;
 	params.keep_alive_interval = 1000;
 	params.connections_idle_timeout = 10000;
-	params.listener.listen_adr = "127.0.0.1:80";
+	params.listener.listen_adr = "127.0.0.1:90";
 	params.listener.init_accepts_count = 10;
 
 	params.callbacks.on_connect = on_connect1;

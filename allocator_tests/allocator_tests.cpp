@@ -36,22 +36,31 @@ nedpool *pool;
 void malloc_test()
 {
 	void *p = malloc(ALLOC_SIZE);
-	memset(p, 0, ALLOC_SIZE);
-	free(p);
+	if(!p)
+	{
+		memset(p, 0, ALLOC_SIZE);
+		free(p);
+	}
 }
 
 void  nedmalloc_test()
 {
 	void *p = nedmalloc(ALLOC_SIZE);
-	memset(p, 0, ALLOC_SIZE);
-	nedfree(p);
+	if(!p)
+	{
+		memset(p, 0, ALLOC_SIZE);
+		nedfree(p);
+	}
 }
 
 void  nedpmalloc_test()
 {
 	void *p = nedpmalloc(pool, ALLOC_SIZE);
-	memset(p, 0, ALLOC_SIZE);
-	nedpfree(pool, p);
+	if(!p)
+	{
+		memset(p, 0, ALLOC_SIZE);
+		nedpfree(pool, p);
+	}
 }
 
 

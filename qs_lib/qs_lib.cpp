@@ -75,7 +75,6 @@ struct _io_context {
 	struct _connection connection;
 	qs_context *server_ctx;
 	states ended_operation;
-	WSABUF wsa_buf;
 	u_long last_activity;
 };
 
@@ -221,15 +220,15 @@ static io_context *alloc_context(qs_context *server)
 {
 	io_context *io_cont = (io_context *)qs_memory_alloc(sizeof(io_context));
 	memset(io_cont, 0, sizeof(io_context));
-	io_cont->connection.buffer = (BYTE *)qs_memory_alloc((size_t)server->qs_params.connection_buffer_size);
+	io_cont->connection.buffer.buf = (char *)qs_memory_alloc((size_t)server->qs_params.connection_buffer_size);
+	io_cont->connection.buffer.data_len = server->qs_params.connection_buffer_size;
 	io_cont->server_ctx = server;
 	return io_cont;
 }
 
 static void free_context(qs_context *server, io_context * io_context)
 {
-	qs_memory_free(io_context->connection.buffer);
-	qs_memory_free(io_context->connection.user_data);
+	qs_memory_free(io_context->connection.buffer.buf);
 	qs_memory_free(io_context);
 }
 
@@ -507,7 +506,7 @@ static void idle_check(connection *con)
 	u_long count = GetTickCount();
 	if((count - context->last_activity) > context->server_ctx->qs_params.connections_idle_timeout)
 	{
-		shutdown(con->client.sock, SD_BOTH);
+		shutdown(con->socket.sock, SD_BOTH);
 	}
 }
 
@@ -553,18 +552,16 @@ MYDLL_API unsigned int qs_stop( void *qs_instance )
 	return ERROR_SUCCESS;
 }
 
-MYDLL_API unsigned int qs_send(connection *connection, BYTE *buffer, u_long len)
+MYDLL_API unsigned int qs_send(connection *connection)
 {
 	io_context *context;
 	int  res;
 	int  error;
 	u_long bytes_send;
-	if(!connection || !buffer) return ERROR_INVALID_PARAMETER;
+	if(!connection) return ERROR_INVALID_PARAMETER;
 	context = get_context(connection);
 	context->ended_operation = send_done;
-	context->wsa_buf.len = len;
-	context->wsa_buf.buf = (CHAR*)buffer;
-	res = WSASend(connection->client.sock, &(context->wsa_buf), 1, &bytes_send, 0, (LPOVERLAPPED)context, 0);
+	res = WSASend(connection->socket.sock, (WSABUF *)&(connection->buffer), 1, &bytes_send, 0, (LPOVERLAPPED)context, 0);
 	if ((res == SOCKET_ERROR) && (WSA_IO_PENDING != (error = WSAGetLastError())))
 	{
 		return error;
@@ -580,23 +577,21 @@ MYDLL_API unsigned int qs_send_file( void *qs_instance, connection *connection, 
 	server = (qs_context*)qs_instance;
 	context = get_context(connection);
 	context->ended_operation = transmit_file;
-	server->ex_funcs.TransmitFile(connection->client.sock, file, 0, 0, (LPOVERLAPPED)context, 0, TF_DISCONNECT | TF_USE_KERNEL_APC);	
+	server->ex_funcs.TransmitFile(connection->socket.sock, file, 0, 0, (LPOVERLAPPED)context, 0, TF_DISCONNECT | TF_USE_KERNEL_APC);	
 	return ERROR_SUCCESS;
 }
 
-MYDLL_API unsigned int qs_recv(connection *connection, BYTE *buffer, u_long len)
+MYDLL_API unsigned int qs_recv(connection *connection)
 {
 	io_context *context;
 	int res;
 	int error;
 	u_long bytes_recv;
 	u_long flags = 0;
-	if(!connection || !buffer) return ERROR_INVALID_PARAMETER;
+	if(!connection) return ERROR_INVALID_PARAMETER;
 	context = get_context(connection);
 	context->ended_operation = recv_done;
-	context->wsa_buf.len = len;
-	context->wsa_buf.buf = (CHAR*)buffer;
-	res = WSARecv(connection->client.sock, &(context->wsa_buf), 1, &bytes_recv, &flags, (LPOVERLAPPED)context, 0);
+	res = WSARecv(connection->socket.sock, (WSABUF *)&(connection->buffer), 1, &bytes_recv, &flags, (LPOVERLAPPED)context, 0);
 	if ((res == SOCKET_ERROR) && (WSA_IO_PENDING != (error = WSAGetLastError())))
 	{
 		return error;
@@ -612,7 +607,7 @@ MYDLL_API unsigned int qs_close_connection( void *qs_instance, connection *conne
 	server = (qs_context*)qs_instance;
 	context = get_context(connection);
 	context->ended_operation = on_disconnect;
-	server->ex_funcs.DisconnectEx(connection->client.sock, (LPOVERLAPPED)context, 0, 0);
+	server->ex_funcs.DisconnectEx(connection->socket.sock, (LPOVERLAPPED)context, 0, 0);
 	return ERROR_SUCCESS;
 }
 
@@ -674,9 +669,9 @@ static void init_accept(qs_context *server, BYTE *out_buf)
 	{
 		client = socket_create(&server->qs_info);
 		new_context->ended_operation = on_connect;
-		new_context->connection.client.sock = client;
+		new_context->connection.socket.sock = client;
 
-		if(server->ex_funcs.AcceptEx(server->qs_socket.sock, new_context->connection.client.sock, out_buf, 0, sizeof(struct sockaddr_storage) + 16, sizeof(struct sockaddr_storage) + 16, 
+		if(server->ex_funcs.AcceptEx(server->qs_socket.sock, new_context->connection.socket.sock, out_buf, 0, sizeof(struct sockaddr_storage) + 16, sizeof(struct sockaddr_storage) + 16, 
 			&bytes_transferred, (LPOVERLAPPED)new_context) == 0 && (error = WSAGetLastError())!=997)
 		{
 			cry(server, "%s: AcceptEx() fail with error: %d",	__func__, error);
@@ -696,7 +691,7 @@ static void set_keep_alive(connection *con, u_long  keepalivetime, u_long keepal
 		alive.onoff = 1;
 		alive.keepalivetime = keepalivetime;
 		alive.keepaliveinterval = keepaliveinterval;
-		dwRet = WSAIoctl(con->client.sock, SIO_KEEPALIVE_VALS, &alive, sizeof(alive),
+		dwRet = WSAIoctl(con->socket.sock, SIO_KEEPALIVE_VALS, &alive, sizeof(alive),
 			NULL, 0, &dwSize, (LPOVERLAPPED)context, NULL);
 	}	
 }
@@ -732,7 +727,7 @@ unsigned __stdcall working_thread(void *s)
 		if((!bytes_transferred && io_ctx->ended_operation != on_connect) || io_ctx->ended_operation == on_disconnect)
 		{
 			(*server->qs_params.callbacks.on_disconnect)(&io_ctx->connection);
-			socket_close(io_ctx->connection.client.sock, &server->qs_info);
+			socket_close(io_ctx->connection.socket.sock, &server->qs_info);
 			connection_storage_delete(server->storage, &io_ctx->connection);	
 			free_context(server, io_ctx);
 			for(; accepts < max_accepts; ++accepts)
@@ -746,20 +741,24 @@ unsigned __stdcall working_thread(void *s)
 		{	
 			--accepts;
 			io_ctx->last_activity = GetTickCount();
-			setsockopt(io_ctx->connection.client.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
+			setsockopt(io_ctx->connection.socket.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, 
 				(char *)&server->qs_socket, sizeof(server->qs_socket) );
 			set_keep_alive(&io_ctx->connection, server->qs_params.keep_alive_time, server->qs_params.keep_alive_interval);
-			len = sizeof(io_ctx->connection.client.lsa);
-			getsockname(io_ctx->connection.client.sock, &io_ctx->connection.client.lsa.sa, &len);
-			len = sizeof(io_ctx->connection.client.rsa);
-			getpeername(io_ctx->connection.client.sock, &io_ctx->connection.client.rsa.sa, &len);
+			len = sizeof(io_ctx->connection.socket.lsa);
+			getsockname(io_ctx->connection.socket.sock, &io_ctx->connection.socket.lsa.sa, &len);
+			len = sizeof(io_ctx->connection.socket.rsa);
+			getpeername(io_ctx->connection.socket.sock, &io_ctx->connection.socket.rsa.sa, &len);
 
-			if(CreateIoCompletionPort((HANDLE)io_ctx->connection.client.sock, server->iocp, 0, 0) == NULL )
+			if(CreateIoCompletionPort((HANDLE)io_ctx->connection.socket.sock, server->iocp, 0, 0) == NULL )
 			{
 				cry(server, "%s: CreateIoCompletionPort() fail with error: %d",	__func__, GetLastError());
 			}
 			connection_storage_add(server->storage, &io_ctx->connection);	
 			server->qs_params.callbacks.on_connect(&io_ctx->connection);
+			for(; accepts < max_accepts; ++accepts)
+			{
+				if(!connection_storage_is_full(server->storage)) init_accept(server, buf);		
+			}
 			continue;
 		}
 	
